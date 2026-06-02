@@ -1,0 +1,64 @@
+services:
+  bridge:
+    build: ./bridge
+    container_name: gemini_bridge
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    networks:
+      - voip
+    depends_on:
+      asterisk:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',8000)); sys.exit(0)"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  asterisk:
+    image: andrius/asterisk:22
+    container_name: asterisk
+    entrypoint: ["/bin/sh", "/templates/entrypoint-wrap.sh"]
+    command: ["/usr/sbin/asterisk", "-vvvdddf", "-T", "-W", "-U", "asterisk", "-p"]
+    env_file:
+      - .host.env
+    environment:
+      - EXTERNAL_IP=${EXTERNAL_IP:-}
+    volumes:
+      - ./asterisk/entrypoint-wrap.sh:/templates/entrypoint-wrap.sh:ro
+      - ./asterisk/pjsip.conf.template:/templates/pjsip.conf.template:ro
+      - ./asterisk/rtp.conf.template:/templates/rtp.conf.template:ro
+      - ./.host.env:/run/host.env:ro
+      - ./asterisk/asterisk.conf:/etc/asterisk/asterisk.conf:ro
+      - ./asterisk/modules.conf:/etc/asterisk/modules.conf:ro
+      - ./asterisk/http.conf:/etc/asterisk/http.conf:ro
+      - ./asterisk/ari.conf:/etc/asterisk/ari.conf:ro
+      - ./asterisk/extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ./asterisk/logger.conf:/etc/asterisk/logger.conf:ro
+    ports:
+      - "5060:5060/udp"
+      - "8088:8088"
+      - "10000-10050:10000-10050/udp"
+    networks:
+      - voip
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "asterisk -rx 'core show version' 2>/dev/null | grep -q Asterisk"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+
+networks:
+  voip:
+    driver: bridge

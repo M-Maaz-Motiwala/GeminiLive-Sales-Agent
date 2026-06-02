@@ -1,0 +1,9 @@
+[general]
+rtpstart=10000
+rtpend=10050
+strictrtp=no
+localnet=127.0.0.0/8
+localnet=10.0.0.0/8
+localnet=172.16.0.0/12
+localnet=192.168.0.0/16
+@EXTERNADDR_LINE@
