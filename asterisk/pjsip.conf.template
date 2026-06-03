@@ -5,10 +5,11 @@
 type=transport
 protocol=udp
 bind=0.0.0.0:5060
+; Only treat Docker-internal subnets as local. Wi-Fi phones (172.17.x, 192.168.x)
+; must be "remote" so Asterisk uses external_signaling_address in Contact.
+; Broad 172.16.0.0/12 here caused Contact: sip:@172.19.0.2:5060 and 32s call drops.
 local_net=127.0.0.0/8
-local_net=10.0.0.0/8
-local_net=172.16.0.0/12
-local_net=192.168.0.0/16
+local_net=172.19.0.0/16
 @EXTERNAL_IP_LINES@
 
 ; -------------------- Extension 1000 --------------------

@@ -1,0 +1,97 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aura
+      POSTGRES_PASSWORD: aura_secret
+      POSTGRES_DB: aura_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aura -d aura_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  fastapi:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://aura:aura_secret@postgres:5432/aura_db
+      REDIS_URL: redis://redis:6379/0
+      RTP_LISTEN_HOST: 0.0.0.0
+      RTP_LISTEN_PORT: 5004
+    ports:
+      - "8000:8000"
+      - "5004:5004/udp"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - uploads_data:/app/uploads
+      - ./backend:/app/backend
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: celery -A backend.celery_app worker --loglevel=info
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://aura:aura_secret@postgres:5432/aura_db
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - uploads_data:/app/uploads
+      - ./backend:/app/backend
+
+  asterisk:
+    build:
+      context: asterisk
+    environment:
+      ARI_PASS: ${ARI_PASS:-aura_ari_secret}
+      SIP_HOST: ${SIP_HOST:-203.130.29.110}
+      SIP_PORT: ${SIP_PORT:-61}
+      SIP_USER: ${SIP_USER:-voip}
+      SIP_PASS: ${SIP_PASS}
+    ports:
+      - "5061:5060/udp"
+      - "8088:8088"
+      - "10000-10100:10000-10100/udp"
+    depends_on:
+      - fastapi
+
+  frontend:
+    build:
+      context: frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - fastapi
+
+volumes:
+  postgres_data:
+  uploads_data:
+
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.200.0/24

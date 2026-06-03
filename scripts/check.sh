@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify bridge + asterisk are running correctly.
+# Verify full stack: platform + bridge + asterisk + frontend.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -12,16 +12,13 @@ fail() { echo -e "${RED}FAIL${NC} $*"; ERR=1; }
 ERR=0
 
 echo "=== Docker containers ==="
-if docker ps --format '{{.Names}}\t{{.Status}}' | grep -q gemini_bridge; then
-  ok "gemini_bridge running"
-else
-  fail "gemini_bridge not running"
-fi
-if docker ps --format '{{.Names}}\t{{.Status}}' | grep -q asterisk; then
-  ok "asterisk running"
-else
-  fail "asterisk not running"
-fi
+for c in aura_platform gemini_bridge asterisk aura_frontend aura_postgres aura_redis; do
+  if docker ps --format '{{.Names}}' | grep -qx "$c"; then
+    ok "$c running"
+  else
+    fail "$c not running"
+  fi
+done
 
 echo ""
 echo "=== Phone SIP address (.host.env) ==="
@@ -34,11 +31,19 @@ else
 fi
 
 echo ""
-echo "=== Bridge health ==="
-if curl -sf --connect-timeout 2 http://127.0.0.1:8000/health >/dev/null; then
-  ok "http://127.0.0.1:8000/health"
+echo "=== Platform API ==="
+if curl -sf --connect-timeout 3 http://127.0.0.1:8000/health >/dev/null; then
+  ok "http://127.0.0.1:8000/health (platform)"
 else
-  fail "bridge HTTP health check"
+  fail "platform HTTP health check"
+fi
+
+echo ""
+echo "=== Admin UI ==="
+if curl -sf --connect-timeout 3 http://127.0.0.1/ >/dev/null; then
+  ok "http://127.0.0.1/ (frontend)"
+else
+  fail "frontend not reachable on :80"
 fi
 
 echo ""
@@ -53,9 +58,17 @@ fi
 echo ""
 echo "=== Bridge → Asterisk ARI websocket ==="
 if docker logs gemini_bridge 2>&1 | grep -q "ARI websocket connected"; then
-  ok "bridge connected to ARI (see docker logs gemini_bridge)"
+  ok "bridge connected to ARI (docker logs gemini_bridge)"
 else
   fail "bridge not connected to ARI yet"
+fi
+
+echo ""
+echo "=== Bridge health (internal) ==="
+if docker exec gemini_bridge python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)" >/dev/null 2>&1; then
+  ok "bridge /health inside container"
+else
+  fail "bridge health check"
 fi
 
 echo ""
@@ -71,6 +84,9 @@ echo ""
 if [ "$ERR" -eq 0 ]; then
   echo -e "${GREEN}All checks passed.${NC}"
   echo ""
+  echo "Admin UI:    http://localhost  (login: admin@aura.ai / changeme123)"
+  echo "Platform API http://localhost:8000"
+  echo ""
   echo "Phone must be on the SAME Wi-Fi as this PC (not mobile data)."
   echo ""
   echo "  SIP server:  ${EXTERNAL_IP:-<host-ip>}"
@@ -78,8 +94,11 @@ if [ "$ERR" -eq 0 ]; then
   echo "  Username:    1000"
   echo "  Password:    1000pass"
   echo ""
-  echo "  Dial 600  = echo test (hear your own voice — try this FIRST)"
-  echo "  Dial 700  = Gemini AI agent"
+  echo "  Dial 600  = echo test"
+  echo "  Dial 701  = Maya — Lead Qualifier"
+  echo "  Dial 702  = Aria — Trangotech Sales"
+  echo "  Dial 703  = Sam — Support FAQ"
+  echo "  Dial 700  = first active agent (legacy)"
 else
   echo -e "${RED}Some checks failed.${NC} Fix issues above, then: ./start.sh up -d --build"
   exit 1

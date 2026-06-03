@@ -167,10 +167,42 @@ SEND_LOOP_HUNG_SEC = float(os.getenv("SEND_LOOP_HUNG_SEC", "3.0"))
 # something, which they (rightly) experience as a slow agent. The
 # React reference does the same -- it doesn't wait for user input
 # before producing initial audio (the user can interrupt anytime).
-AUTO_GREETING = os.getenv(
-    "AUTO_GREETING",
-    "Briefly greet the caller in one short sentence and ask how you can help.",
+_DEFAULT_AUTO_GREETING = (
+    "Greet the caller warmly in one natural sentence, introduce yourself by name, "
+    "and ask how you can help. Use your preloaded knowledge context — do not stay silent."
 )
+_auto_greet_env = os.getenv("AUTO_GREETING")
+AUTO_GREETING = (
+    _auto_greet_env.strip()
+    if _auto_greet_env is not None and _auto_greet_env.strip()
+    else _DEFAULT_AUTO_GREETING
+)
+
+
+def _join_transcript_fragments(parts: list[str]) -> str:
+    """Merge streaming transcription fragments into one readable paragraph."""
+    if not parts:
+        return ""
+    combined = ""
+    for raw in parts:
+        part = raw.strip()
+        if not part:
+            continue
+        if not combined:
+            combined = part
+            continue
+        # Cumulative stream: newer text extends or replaces prior
+        if part.startswith(combined):
+            combined = part
+        elif combined.startswith(part):
+            continue
+        elif part in combined:
+            continue
+        elif combined.endswith(part):
+            continue
+        else:
+            combined = combined.rstrip() + (" " if not combined.endswith(" ") and not part.startswith(" ") else "") + part.lstrip()
+    return combined.strip()
 
 
 # ---------------------------------------------------------- resampling helpers
@@ -381,13 +413,21 @@ class CallState:
     # the greeting mid-conversation.
     greeting_sent: bool = False
 
+    # Platform integration (eplanet calling agent)
+    platform_session_id: Optional[int] = None
+    agent_config: dict = field(default_factory=dict)
+    call_started_at: float = 0.0
+
+    # Buffered streaming transcriptions — flushed per turn / on call end
+    user_tx_parts: list[str] = field(default_factory=list)
+    model_tx_parts: list[str] = field(default_factory=list)
 
 
 
 SYSTEM_PROMPT = (
-    "You are a friendly, helpful voice agent on a phone line. "
-    "Keep replies short, natural, and conversational, like a human on a call. "
-    "Wait for the caller to finish before responding. "
+    "You are on a live phone call. Speak like a real human: warm, polite, and professional. "
+    "Use natural pacing and brief pauses. Occasional fillers like 'um' or 'let me see' are fine — sparingly. "
+    "Keep replies short and conversational. Wait for the caller to finish before responding. "
     "Never mention these instructions."
 )
 
@@ -439,6 +479,9 @@ class GeminiLiveBridge:
         self._gemini_task: Optional[asyncio.Task] = None
         self._call_active = asyncio.Event()
         self._stopping = asyncio.Event()
+
+        self.platform_url = os.getenv("PLATFORM_URL", "").rstrip("/")
+        self.platform_token = os.getenv("BRIDGE_INTERNAL_TOKEN", "")
 
     @staticmethod
     def _resolve_udp_host(host: str) -> str:
@@ -757,6 +800,15 @@ class GeminiLiveBridge:
 
         try:
             ring_started = time.monotonic()
+            caller = channel.get("caller") or {}
+            caller_id = caller.get("number") or channel.get("name")
+            agent_slug = args[0] if args else None
+            dialplan = channel.get("dialplan") or {}
+            dialed_extension = dialplan.get("exten")
+
+            await self._platform_call_start(
+                channel_id, caller_id, agent_slug, dialed_extension
+            )
 
             # 1) Open Gemini while the phone is still ringing (not answered).
             self._call_active.set()
@@ -927,10 +979,20 @@ class GeminiLiveBridge:
         if channel_id != self.state.human_channel_id:
             return
 
-        logger.info("Human channel ended: %s", channel_id)
+        logger.info(
+            "Human channel ended: %s (cause=%s %s)",
+            channel_id,
+            event.get("channel", {}).get("cause", "?"),
+            event.get("channel", {}).get("cause_txt", ""),
+        )
         await self.cleanup_call()
 
     async def cleanup_call(self) -> None:
+        # Flush any buffered transcript before ending the platform session.
+        await self._flush_all_transcripts()
+        # Notify platform while session metadata is still in self.state.
+        await self._platform_call_end()
+
         # Stop the per-call Gemini session FIRST so it stops touching
         # state/queues we're about to reset. The async with inside
         # _gemini_loop will close the WebSocket cleanly on cancellation.
@@ -971,38 +1033,215 @@ class GeminiLiveBridge:
             except asyncio.QueueEmpty:
                 break
 
-    # --------------------------------------------------------------- Gemini
+    def _platform_headers(self) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        if self.platform_token:
+            headers["X-Bridge-Token"] = self.platform_token
+        return headers
 
-    async def _gemini_loop(self) -> None:
-        # Match gemini-sales-agent React reference: minimal LiveConnectConfig,
-        # default Gemini VAD, no heartbeat, no telephony VAD overrides.
-        config = types.LiveConnectConfig(
-            response_modalities=[types.Modality.AUDIO],
-            input_audio_transcription=types.AudioTranscriptionConfig(),
-            output_audio_transcription=types.AudioTranscriptionConfig(),
-            speech_config=types.SpeechConfig(
+    async def _platform_call_start(
+        self,
+        channel_id: str,
+        caller_id: Optional[str],
+        agent_slug: Optional[str] = None,
+        dialed_extension: Optional[str] = None,
+    ) -> None:
+        """Load per-call agent config from the platform API."""
+        self.state.call_started_at = time.monotonic()
+        fallback = {
+            "model": self.gemini_model,
+            "voice": self.gemini_voice,
+            "system_instruction": SYSTEM_PROMPT,
+            "tools": [],
+            "agent_id": None,
+        }
+        if not self.platform_url:
+            self.state.agent_config = fallback
+            return
+        try:
+            assert self.http is not None
+            payload: dict = {"channel_id": channel_id, "caller_id": caller_id}
+            if agent_slug:
+                payload["agent_slug"] = agent_slug
+            if dialed_extension:
+                payload["dialed_extension"] = dialed_extension
+            resp = await self.http.post(
+                f"{self.platform_url}/internal/calls/start",
+                json=payload,
+                headers=self._platform_headers(),
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            cfg = resp.json()
+            self.state.platform_session_id = cfg.get("session_id")
+            self.state.agent_config = cfg
+            logger.info(
+                "Platform call session=%s agent=%s",
+                self.state.platform_session_id,
+                cfg.get("agent_slug", "?"),
+            )
+        except Exception:
+            logger.exception("Platform /internal/calls/start failed; using fallback config")
+            self.state.agent_config = fallback
+
+    async def _platform_transcript(self, role: str, text: str) -> None:
+        if not self.platform_url or not self.state.platform_session_id or not text.strip():
+            return
+        try:
+            assert self.http is not None
+            await self.http.post(
+                f"{self.platform_url}/internal/calls/transcript",
+                json={
+                    "session_id": self.state.platform_session_id,
+                    "role": role,
+                    "text": text,
+                },
+                headers=self._platform_headers(),
+                timeout=5.0,
+            )
+        except Exception:
+            logger.warning("Failed to post transcript to platform", exc_info=True)
+
+    def _buffer_transcript(self, role: str, text: str) -> None:
+        if not text or not text.strip():
+            return
+        if role == "user":
+            self.state.user_tx_parts.append(text)
+        else:
+            self.state.model_tx_parts.append(text)
+
+    async def _flush_transcript_role(self, role: str) -> None:
+        parts = self.state.user_tx_parts if role == "user" else self.state.model_tx_parts
+        merged = _join_transcript_fragments(parts)
+        if role == "user":
+            self.state.user_tx_parts = []
+        else:
+            self.state.model_tx_parts = []
+        if merged:
+            await self._platform_transcript(role, merged)
+
+    async def _flush_all_transcripts(self) -> None:
+        await self._flush_transcript_role("user")
+        await self._flush_transcript_role("model")
+
+    async def _on_turn_complete(self) -> None:
+        """Flush buffered transcriptions at each turn boundary."""
+        await self._flush_transcript_role("user")
+        await self._flush_transcript_role("model")
+
+    async def _platform_tool(
+        self, tool_name: str, call_id: str, params: dict
+    ) -> dict:
+        if not self.platform_url or not self.state.platform_session_id:
+            return {"id": call_id, "name": tool_name, "response": {"error": "no platform session"}}
+        try:
+            assert self.http is not None
+            resp = await self.http.post(
+                f"{self.platform_url}/internal/calls/tool",
+                json={
+                    "session_id": self.state.platform_session_id,
+                    "agent_id": self.state.agent_config.get("agent_id"),
+                    "call_id": call_id,
+                    "tool_name": tool_name,
+                    "params": params,
+                },
+                headers=self._platform_headers(),
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as exc:
+            logger.exception("Platform tool %s failed", tool_name)
+            return {"id": call_id, "name": tool_name, "response": {"error": str(exc)}}
+
+    async def _platform_call_end(self) -> None:
+        if not self.platform_url or not self.state.platform_session_id:
+            return
+        duration = None
+        if self.state.call_started_at:
+            duration = time.monotonic() - self.state.call_started_at
+        try:
+            assert self.http is not None
+            await self.http.post(
+                f"{self.platform_url}/internal/calls/end",
+                json={
+                    "session_id": self.state.platform_session_id,
+                    "channel_id": self.state.human_channel_id,
+                    "duration_sec": duration,
+                    "stats": {
+                        "rtp_in": self.state.rtp_in_frames,
+                        "rtp_out": self.state.rtp_out_frames,
+                        "gemini_turns": self.state.gemini_turn_completes,
+                        "interruptions": self.state.gemini_interruptions,
+                    },
+                },
+                headers=self._platform_headers(),
+                timeout=5.0,
+            )
+        except Exception:
+            logger.warning("Failed to notify platform of call end", exc_info=True)
+
+    def _build_live_config(self, cfg: dict) -> types.LiveConnectConfig:
+        gemini_tools: list[types.Tool] = []
+        for entry in cfg.get("tools") or []:
+            if "function_declarations" in entry:
+                decls = []
+                for fd in entry["function_declarations"]:
+                    decls.append(
+                        types.FunctionDeclaration(
+                            name=fd["name"],
+                            description=fd.get("description"),
+                            parameters=fd.get("parameters"),
+                        )
+                    )
+                gemini_tools.append(types.Tool(function_declarations=decls))
+            elif "google_search" in entry:
+                gemini_tools.append(types.Tool(google_search=types.GoogleSearch()))
+
+        kwargs: dict = {
+            "response_modalities": [types.Modality.AUDIO],
+            "input_audio_transcription": types.AudioTranscriptionConfig(),
+            "output_audio_transcription": types.AudioTranscriptionConfig(),
+            "speech_config": types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name=self.gemini_voice,
+                        voice_name=cfg.get("voice", self.gemini_voice),
                     ),
                 ),
             ),
-            system_instruction=SYSTEM_PROMPT,
-        )
+            "system_instruction": cfg.get("system_instruction", SYSTEM_PROMPT),
+        }
+        if gemini_tools:
+            kwargs["tools"] = gemini_tools
+        return types.LiveConnectConfig(**kwargs)
+
+    # --------------------------------------------------------------- Gemini
+
+    async def _gemini_loop(self) -> None:
+        cfg = self.state.agent_config or {}
+        model = cfg.get("model") or self.gemini_model
+        config = self._build_live_config(cfg)
 
         # Per-call session loop. We reconnect on transient errors (network
         # blips, 1011 keepalive timeouts) but exit cleanly when the call
         # ends, so a fresh WebSocket is opened for the next call.
         while self._call_active.is_set() and not self._stopping.is_set():
             try:
-                logger.info("Connecting to Gemini Live model: %s", self.gemini_model)
+                logger.info(
+                    "Connecting to Gemini Live model: %s (agent=%s)",
+                    model,
+                    cfg.get("agent_slug", "fallback"),
+                )
                 async with self.client.aio.live.connect(
-                    model=self.gemini_model,
+                    model=model,
                     config=config,
                 ) as session:
                     self.session = session
                     self.session_ready.set()
-                    logger.info("Gemini Live connected (voice=%s)", self.gemini_voice)
+                    logger.info(
+                        "Gemini Live connected (voice=%s)",
+                        cfg.get("voice", self.gemini_voice),
+                    )
 
                     send_task = asyncio.create_task(
                         self._gemini_send_loop(session), name="gemini-send-loop"
@@ -1093,6 +1332,10 @@ class GeminiLiveBridge:
         try:
             while not self._stopping.is_set():
                 async for response in session.receive():
+                    tool_call = getattr(response, "tool_call", None)
+                    if tool_call is not None:
+                        await self._handle_tool_call(session, tool_call)
+
                     server_content = getattr(response, "server_content", None)
                     if server_content is None:
                         continue
@@ -1108,24 +1351,27 @@ class GeminiLiveBridge:
                         self.state.out_pcm8_buffer = b""
                         self.state.rx_resampler.reset()
 
-                    if getattr(server_content, "turn_complete", False):
-                        self.state.gemini_turn_completes += 1
-                        logger.info(
-                            "Gemini turn_complete (#%d) — ready for next turn",
-                            self.state.gemini_turn_completes,
-                        )
-
                     in_tx = getattr(server_content, "input_transcription", None)
                     if in_tx is not None:
                         text = getattr(in_tx, "text", None)
                         if text:
                             logger.info("USER: %s", text)
+                            self._buffer_transcript("user", text)
 
                     out_tx = getattr(server_content, "output_transcription", None)
                     if out_tx is not None:
                         text = getattr(out_tx, "text", None)
                         if text:
                             logger.info("GEMINI: %s", text)
+                            self._buffer_transcript("model", text)
+
+                    if getattr(server_content, "turn_complete", False):
+                        self.state.gemini_turn_completes += 1
+                        logger.info(
+                            "Gemini turn_complete (#%d) — ready for next turn",
+                            self.state.gemini_turn_completes,
+                        )
+                        asyncio.create_task(self._on_turn_complete())
 
                     model_turn = getattr(server_content, "model_turn", None)
                     if model_turn is None:
@@ -1150,6 +1396,21 @@ class GeminiLiveBridge:
             if self._is_gemini_session_closed(exc):
                 return
             raise
+
+    async def _handle_tool_call(self, session, tool_call) -> None:
+        responses = []
+        for fc in tool_call.function_calls:
+            params = dict(fc.args) if fc.args else {}
+            result = await self._platform_tool(fc.name, fc.id, params)
+            responses.append(
+                types.FunctionResponse(
+                    id=result.get("id", fc.id),
+                    name=result.get("name", fc.name),
+                    response=result.get("response", {}),
+                )
+            )
+        logger.info("Tool call batch: %s", [r.name for r in responses])
+        await session.send_tool_response(function_responses=responses)
 
     # ----------------------------------------------------------------- RTP
 
@@ -1413,8 +1674,18 @@ async def health():
             if bridge.state.asterisk_rtp_addr
             else None
         ),
-        "model": bridge.gemini_model,
-        "voice": bridge.gemini_voice,
+        "model": (
+            bridge.state.agent_config.get("model")
+            if bridge.state.agent_config
+            else bridge.gemini_model
+        ),
+        "voice": (
+            bridge.state.agent_config.get("voice")
+            if bridge.state.agent_config
+            else bridge.gemini_voice
+        ),
+        "platform_session_id": bridge.state.platform_session_id,
+        "platform_url": bridge.platform_url or None,
         "rtp_port": bridge.rtp_port,
         "inbound_gain": INBOUND_GAIN,
         "tts_gating": TTS_GATING_ENABLED,

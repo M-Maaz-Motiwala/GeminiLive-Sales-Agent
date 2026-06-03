@@ -1,0 +1,32 @@
+# Support FAQ — Trangotech
+
+## Account & Billing
+Q: How do I pay my invoice?
+A: Invoices are sent by email with a secure payment link. We accept credit card and bank transfer.
+
+Q: What is your refund policy?
+A: Deposits are non-refundable once work begins. Unused retainer hours can be applied to future work within 90 days.
+
+## Website Maintenance
+Q: What does the maintenance plan include?
+A: Monthly plans include security updates, backups, uptime monitoring, and up to 2 hours of content changes per month.
+
+Q: How fast do you respond to support tickets?
+A: Standard response within 24 business hours. Priority plans get 4-hour response.
+
+## Technical Support
+Q: My website is down. What should I do?
+A: Call this support line or email support@trangotech.example.com. We monitor uptime 24/7 for maintenance clients.
+
+Q: Can you migrate my site from another host?
+A: Yes. Migrations are included in new project scopes or billed at $500–$1,500 depending on complexity.
+
+## General
+Q: What are your business hours?
+A: Monday–Friday, 9 AM–6 PM Eastern. Emergency support for maintenance clients outside hours.
+
+Q: Do you offer training?
+A: Yes. We provide a 1-hour handoff session with every website launch and optional training packages.
+
+## Escalation
+If the issue requires sales or a new project quote, offer to transfer or schedule a callback with the sales team (extension 702).

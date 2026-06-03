@@ -1,0 +1,46 @@
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider } from '@/src/auth/AuthContext';
+import { ProtectedRoute } from '@/src/components/ProtectedRoute';
+import { AdminLayout } from '@/src/components/admin/AdminLayout';
+import Login from '@/src/pages/admin/Login';
+import Dashboard from '@/src/pages/admin/Dashboard';
+import Agents from '@/src/pages/admin/Agents';
+import Sessions from '@/src/pages/admin/Sessions';
+import SessionDetail from '@/src/pages/admin/SessionDetail';
+import Leads from '@/src/pages/admin/Leads';
+import Contacts from '@/src/pages/admin/Contacts';
+import Documents from '@/src/pages/admin/Documents';
+import Outputs from '@/src/pages/admin/Outputs';
+import Notes from '@/src/pages/admin/Notes';
+import FAQ from '@/src/pages/admin/FAQ';
+import HelpDocs from '@/src/pages/admin/HelpDocs';
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<Navigate to="/admin" replace />} />
+          <Route path="/admin/login" element={<Login />} />
+          <Route
+            path="/admin"
+            element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}
+          >
+            <Route index element={<Dashboard />} />
+            <Route path="agents" element={<Agents />} />
+            <Route path="sessions" element={<Sessions />} />
+            <Route path="sessions/:id" element={<SessionDetail />} />
+            <Route path="leads" element={<Leads />} />
+            <Route path="contacts" element={<Contacts />} />
+            <Route path="documents" element={<Documents />} />
+            <Route path="outputs" element={<Outputs />} />
+            <Route path="notes" element={<Notes />} />
+            <Route path="faq" element={<FAQ />} />
+            <Route path="docs" element={<HelpDocs />} />
+          </Route>
+          <Route path="*" element={<Navigate to="/admin/login" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
+  );
+}

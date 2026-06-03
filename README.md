@@ -1,156 +1,264 @@
-# Asterisk + FastAPI + Gemini Live calling agent
+# Asterisk + Bridge + Calling Agent Platform
 
-A minimal R&D rig that lets you register a SIP softphone (Zoiper desktop,
-Linphone, etc.) on your laptop, dial an extension, and talk to a Google
-Gemini Live model. Asterisk handles the SIP/RTP, ARI hands the call into a
-`Stasis` app, and a FastAPI service ferries μ-law RTP between Asterisk and
-the Gemini Live WebSocket.
+Full-stack **AI phone agent** for LAN testing: register Zoiper on your Wi‑Fi, dial an extension, talk to **Google Gemini Live** with per-agent personas, **CRM tools**, and **Pinecone RAG** knowledge base — all managed from the **Aura admin UI**.
+
+---
+
+## Table of contents
+
+1. [Tech stack](#tech-stack)
+2. [Architecture](#architecture)
+3. [Prerequisites](#prerequisites)
+4. [Quick start](#quick-start)
+5. [Environment variables](#environment-variables)
+6. [Zoiper / SIP setup](#zoiper--sip-setup-call-from-your-phone)
+7. [What to dial](#what-to-dial)
+8. [Admin UI walkthrough](#admin-ui-walkthrough)
+9. [How to create an agent](#how-to-create-an-agent)
+10. [AI knowledge base (RAG)](#ai-knowledge-base-rag)
+11. [Project structure](#project-structure)
+12. [Useful commands](#useful-commands)
+13. [Verification checklist](#verification-checklist)
+14. [Troubleshooting](#troubleshooting)
+
+---
+
+## Tech stack
+
+| Layer | Technology | Role |
+| ----- | ---------- | ---- |
+| **Telephony** | Asterisk 22 (PJSIP, ARI, Stasis) | SIP registration, dialplan, RTP to bridge |
+| **Voice bridge** | Python FastAPI + google-genai | ARI websocket, RTP ↔ Gemini Live WebSocket |
+| **Platform API** | FastAPI + SQLAlchemy (async) | Agents, sessions, CRM, internal bridge API |
+| **Admin UI** | React + Vite + nginx | Agent CRUD, documents, sessions, leads |
+| **Database** | PostgreSQL 16 | Agents, sessions, messages, leads, documents |
+| **Queue** | Redis 7 + Celery | Async document indexing |
+| **Vector DB** | Pinecone (serverless) | RAG embeddings + semantic search |
+| **Embeddings** | gemini-embedding-001 (768 dims) | Chunk vectors for knowledge base |
+| **Voice AI** | gemini-3.1-flash-live-preview | Real-time speech (configurable per agent) |
+| **Orchestration** | Docker Compose | 8 services on one machine |
+
+### Docker services
+
+| Container | Port (host) | Purpose |
+| --------- | ----------- | ------- |
+| aura_frontend | **80** | Admin UI |
+| aura_platform | **8000** | Platform REST API |
+| aura_postgres | internal | Database |
+| aura_redis | internal | Celery broker |
+| aura_celery | internal | Document indexing worker |
+| aura_platform_init | one-shot | Migration + seed |
+| asterisk | **5060/udp**, **8088**, **10000–10050/udp** | SIP + ARI + RTP |
+| gemini_bridge | internal | ARI + Gemini |
+
+---
 
 ## Architecture
 
 ```
-Zoiper (host)  --SIP/RTP--> Asterisk(PJSIP, ARI)
-                                |
-                                |  Stasis(gemini-agent)
-                                v
-                          ExternalMedia (ulaw RTP)
-                                |
-                                v
-                 FastAPI bridge (Python, this repo)
-                                |
-                                v  WebSocket, audio/pcm 16 kHz in / 24 kHz out
-                          Gemini Live API
+Zoiper (phone, same Wi-Fi)
+    │  SIP UDP 5060
+    ▼
+Asterisk (PJSIP + dialplan 701/702/703)
+    │  Stasis(gemini-agent, agent-slug)
+    ▼
+gemini_bridge (ARI + RTP :40000 + Gemini Live WS)
+    │  POST /internal/calls/*  (X-Bridge-Token)
+    ▼
+aura_platform (FastAPI :8000)
+    ├── PostgreSQL  (agents, sessions, leads, documents)
+    ├── Celery      (index PDFs/TXT → Pinecone)
+    └── Pinecone    (namespace agent-{id} per agent)
+    ▲
+aura_frontend (:80) — admin UI
 ```
 
-## What you need
+Only **bridge** subscribes to ARI app `gemini-agent`. Platform does not start ARI/RTP.
 
-- Docker + Docker Compose.
-- A Gemini API key from <https://aistudio.google.com/apikey>.
-- A SIP softphone. Zoiper Desktop is the easiest on Linux.
+---
 
-## Quickstart
+## Prerequisites
+
+| Item | Required | Get it |
+| ---- | -------- | ------ |
+| Docker + Compose | Yes | https://docs.docker.com/get-docker/ |
+| Gemini API key | Yes | https://aistudio.google.com/apikey |
+| Pinecone API key | For RAG | https://app.pinecone.io/ → API Keys |
+| Zoiper | Yes | https://www.zoiper.com/ |
+| Same LAN as PC | Yes | Phone on Wi‑Fi, not mobile data |
+
+---
+
+## Quick start
 
 ```bash
 cp .env.example .env
-# edit .env and paste your GEMINI_API_KEY
-docker compose up --build
+# Edit .env: GEMINI_API_KEY, PINECONE_API_KEY
+
+./start.sh up -d --build
+./scripts/check.sh
 ```
 
-On a successful start you should see:
+First login: **http://localhost** → redirects to admin (login if needed) — `admin@aura.ai` / `changeme123`
 
-- `gemini_bridge` logs `Bridge started. RTP listening on UDP 40000` and
-  `Gemini Live connected`.
-- `asterisk` logs `PJSIP Listening on Transport ...` and ARI starts on
-  `0.0.0.0:8088`.
+Re-seed (idempotent): `make bootstrap`
 
-Check the bridge health endpoint:
+---
 
-```bash
-curl -s http://localhost:8000/health | jq
-```
+## Environment variables
 
-## Configure Zoiper
+Single root **`.env`** for platform, celery, and bridge.
 
-Create a new SIP account in Zoiper with:
+| Variable | Purpose |
+| -------- | ------- |
+| GEMINI_API_KEY | Gemini Live + embeddings |
+| PINECONE_API_KEY | RAG vector DB — https://app.pinecone.io/ |
+| PINECONE_INDEX_NAME | Default `aura-knowledge` (auto-created) |
+| PINECONE_ENVIRONMENT | Default `us-east-1` |
+| BRIDGE_INTERNAL_TOKEN | Bridge ↔ platform secret |
+| JWT_SECRET_KEY | Admin JWT |
+| ADMIN_EMAIL / ADMIN_PASSWORD | Bootstrap admin |
+| ARI_* | Must match asterisk/ari.conf |
+| RTP_PORT | 40000 (ExternalMedia → bridge) |
 
-| Field      | Value           |
-| ---------- | --------------- |
-| Username   | `1000`          |
-| Password   | `1000pass`      |
-| Domain     | `127.0.0.1`     |
-| Outbound   | (leave empty)   |
-| Transport  | UDP             |
-| Codecs     | G.711 μ-law (`PCMU`) only |
+LAN IP is written to **`.host.env`** as `EXTERNAL_IP` by `./start.sh`.
 
-Optionally add a second profile for `1001` / `1001pass` if you want
-to call extension-to-extension.
+---
 
-When Zoiper reports `Registered`, you are ready.
+## Zoiper / SIP setup (call from your phone)
+
+Use `EXTERNAL_IP` from `./scripts/check.sh` (not 127.0.0.1 unless Zoiper is on the same machine).
+
+| Field | Value |
+| ----- | ----- |
+| Username | 1000 |
+| Password | 1000pass |
+| Domain / Server | EXTERNAL_IP from .host.env |
+| Port | 5060 UDP |
+| Codecs | G.711 μ-law (PCMU) only |
+
+Tips: use headphones; disable Zoiper echo cancellation for AI calls; dial 600 for echo test first.
+
+---
 
 ## What to dial
 
-| Dial | What happens |
-| ---- | ------------ |
-| `700` | Sends the call into `Stasis(gemini-agent)`. The FastAPI bridge attaches an `externalMedia` leg, streams audio to/from Gemini Live, and you hear the model speak. |
-| `600` | Asterisk `Echo()` test. Useful to check your softphone codec/mic. |
-| `1000` | Rings Zoiper account 1000. |
-| `1001` | Rings Zoiper account 1001. Use this from 1000 to verify two-way SIP/RTP audio before involving the AI. |
+| Ext | Agent | Purpose |
+| --- | ----- | ------- |
+| 701 | Maya — Lead Qualifier | Collect lead info, save via CRM |
+| 702 | Aria — Trangotech Sales | Sales + pricing from KB |
+| 703 | Sam — Support FAQ | FAQ from KB only |
+| 700 | First active agent | Legacy fallback |
+| 600 | Echo test | Mic/speaker check |
+
+---
+
+## Admin UI walkthrough
+
+| Page | Purpose |
+| ---- | ------- |
+| Dashboard | Getting started + SIP IP |
+| Agents | Extensions, prompts, tools |
+| Documents | Upload KB files per agent |
+| Sessions | Transcripts + auto summaries |
+| Leads | CRM from 701 calls |
+
+API: http://localhost:8000/health  
+SIP info: http://localhost:8000/api/system/info
+
+---
+
+## How to create an agent
+
+1. Admin → **Agents** → **New Agent**
+2. Set name, **inbound extension** (e.g. 704), voice, model, system prompt, tools
+3. Enable **search_knowledge_base** if using RAG
+4. Add dialplan in `asterisk/extensions.conf`:
+
+```ini
+exten => 704,1,Stasis(gemini-agent,my-slug)
+ same => n,Hangup()
+```
+
+5. `./start.sh up -d asterisk`
+6. Upload docs in **Documents** for that agent
+7. Dial extension from Zoiper
+
+Human-like voice behavior is added automatically (master prompt).
+
+---
+
+## AI knowledge base (RAG)
+
+**Flow:** Upload doc → Celery chunks text → Gemini embeddings → Pinecone `agent-{id}` namespace → `search_knowledge_base` tool during calls.
+
+**Seed docs** (auto on bootstrap if PINECONE_API_KEY set):
+
+| File | Agent | Ext |
+| ---- | ----- | --- |
+| lead-qualification-script.txt | Maya | 701 |
+| trangotech-services.txt | Aria | 702 |
+| support-faq.txt | Sam | 703 |
+
+**Pinecone:** Index `aura-knowledge` is auto-created. Bootstrap is idempotent (no duplicate agents/docs).
+
+**Get Pinecone key:** https://app.pinecone.io/ → API Keys → Create → paste in `.env` → `make bootstrap`
+
+---
+
+## Project structure
+
+```
+astrersik/
+├── .env / .env.example / .host.env
+├── docker-compose.yml
+├── start.sh
+├── Makefile
+├── scripts/check.sh
+├── asterisk/          # SIP, ARI, extensions 701-703
+├── bridge/app/main.py # Telephony + Gemini + platform client
+└── eplanet-calling-agent/gemini-sales-agent/
+    ├── backend/       # API, RAG, bootstrap, seed_data/
+    └── frontend/      # React admin
+```
+
+---
 
 ## Useful commands
 
 ```bash
-# Tail bridge logs (USER:/GEMINI: transcript lines appear here)
-docker logs -f gemini_bridge
-
-# Tail Asterisk console
-docker logs -f asterisk
-
-# Drop into the Asterisk CLI
-docker exec -it asterisk asterisk -rvvv
-
-# Inside the CLI:
-#   pjsip show endpoints
-#   pjsip show contacts
-#   ari show apps
-#   core show channels
+./start.sh up -d --build
+./scripts/check.sh
+make bootstrap
+make logs
+docker logs -f aura_celery
 ```
+
+---
+
+## Verification checklist
+
+| Step | Check |
+| ---- | ----- |
+| check.sh | All OK |
+| Login | admin@aura.ai / changeme123 |
+| Agents | 701/702/703 |
+| Documents | 3 seed docs **indexed** |
+| Zoiper | Registered to EXTERNAL_IP |
+| Dial 701 | Lead in Leads page |
+| Sessions | Transcript + summary |
+
+---
 
 ## Troubleshooting
 
-### Zoiper can't register
+- **No register:** same Wi‑Fi, check EXTERNAL_IP, port 5060 free
+- **No audio:** dial 600, headphones, APM_ENABLED=0
+- **RAG failed:** check PINECONE_API_KEY, `docker logs aura_celery`, `make bootstrap`
+- **One call only:** hang up before redialing
 
-- Verify Asterisk is listening: `docker exec asterisk asterisk -rx 'pjsip show transports'`.
-- Make sure host port 5060/udp is not already taken (`sudo ss -ulpn | grep 5060`).
-- Confirm credentials in `asterisk/pjsip.conf` match the Zoiper account.
+---
 
-### Call connects but no audio (one-way or no-way)
+## Out of scope (v1)
 
-- Confirm the RTP port range is exposed: `docker port asterisk | grep 1000`.
-- Confirm your softphone is using G.711 μ-law (`PCMU`). Other codecs are
-  disallowed in `pjsip.conf`.
-- Hit `http://localhost:8000/health` while on the call: `asterisk_rtp_addr`
-  should be populated. If it stays null, Asterisk RTP is not reaching the
-  bridge container.
-
-### Bridge logs say `media= got an unexpected keyword argument`
-
-- You are on an older `google-genai` SDK. Rebuild: `docker compose build --no-cache bridge`.
-
-### Gemini connects then immediately disconnects, or `1008 ... not found for API version v1beta`
-
-This means the `GEMINI_MODEL` value isn't valid for the AI Studio (api-key)
-Live API. Use one of:
-
-- `gemini-3.1-flash-live-preview` (default, recommended)
-- `gemini-2.5-flash-native-audio-preview-12-2025`
-
-Do **not** use `gemini-2.0-flash-live-preview-04-09` (Vertex AI only) or
-`gemini-2.0-flash-live-001` (shut down Dec 9, 2025).
-
-### "A call is already active" warning
-
-- This demo is single-call by design. Hang up the existing call before
-  starting a new one, or extend `CallState` per-channel for multi-call.
-
-## File layout
-
-```
-.
-├── docker-compose.yml
-├── .env.example
-├── asterisk/
-│   ├── asterisk.conf
-│   ├── modules.conf
-│   ├── logger.conf
-│   ├── http.conf
-│   ├── ari.conf
-│   ├── rtp.conf
-│   ├── pjsip.conf
-│   └── extensions.conf
-└── bridge/
-    ├── Dockerfile
-    ├── requirements.txt
-    └── app/
-        ├── __init__.py
-        └── main.py
-```
+Browser voice UI, SIP trunk/public DID, outbound dial from admin, multi-concurrent calls.

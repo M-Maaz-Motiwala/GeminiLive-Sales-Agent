@@ -1,0 +1,34 @@
+# Nested package — root .gitignore covers most patterns.
+# Additional paths specific to this subproject:
+
+node_modules/
+dist/
+build/
+coverage/
+.vite/
+.cache/
+
+# Env secrets (use repo root .env for Docker stack)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+
+# Uploads (Docker volume in production)
+uploads/

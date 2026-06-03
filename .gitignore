@@ -1,1 +1,166 @@
+# =============================================================================
+# astrersik — root gitignore
+# =============================================================================
+
+# --- Secrets & local runtime (never commit) ---
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.production.local
 .host.env
+*.pem
+*.key
+*.p12
+credentials.json
+secrets/
+.secrets/
+
+# Keep templates tracked
+!.env.example
+!**/.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+celerybeat-schedule
+celerybeat.pid
+*.manifest
+*.spec
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.virtualenv/
+
+# --- Node / frontend ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.pnpm-store/
+.npm/
+.yarn/
+.pnp.*
+*.tsbuildinfo
+
+# Vite / React build output
+dist/
+dist-ssr/
+build/
+.vite/
+.cache/
+.parcel-cache/
+.turbo/
+.next/
+out/
+.nuxt/
+.svelte-kit/
+storybook-static/
+
+# --- Docker / local data ---
+uploads/
+data/
+postgres_data/
+*.sql.gz
+docker-compose.override.yml
+docker-compose.local.yml
+
+# --- IDE & editors ---
+.idea/
+*.iml
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# --- OS junk ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# --- Logs & temp ---
+*.log
+logs/
+log/
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+
+# --- Test / coverage artifacts ---
+coverage/
+.nyc_output/
+junit.xml
+test-results/
+playwright-report/
+playwright/.cache/
+
+# --- Asterisk / telephony runtime (if generated locally) ---
+asterisk/logs/
+*.call
+
+# --- Misc ---
+*.pid
+*.seed
+*.pid.lock
+.vercel
+.netlify
+.terraform/
+*.tfstate
+*.tfstate.*
+.cursor/plans/

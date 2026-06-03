@@ -2,8 +2,7 @@
 rtpstart=10000
 rtpend=10050
 strictrtp=no
+; Match pjsip.conf.template — do not mark Wi-Fi phones as localnet.
 localnet=127.0.0.0/8
-localnet=10.0.0.0/8
-localnet=172.16.0.0/12
-localnet=192.168.0.0/16
+localnet=172.19.0.0/16
 @EXTERNADDR_LINE@
