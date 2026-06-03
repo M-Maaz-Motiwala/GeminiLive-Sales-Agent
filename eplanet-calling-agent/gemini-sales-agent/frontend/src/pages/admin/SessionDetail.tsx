@@ -9,7 +9,7 @@ import {
   PreloadedKbCard,
   type TimelineEvent,
 } from '@/src/components/admin/SessionTimeline';
-import { API_BASE } from '@/src/lib/api';
+import { API_BASE, apiFetch } from '@/src/lib/api';
 
 export default function SessionDetail() {
   const { id } = useParams();
@@ -19,7 +19,7 @@ export default function SessionDetail() {
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const load = () => {
-    fetch(`${API_BASE}/api/sessions/${id}`, { headers }).then(r => r.json()).then(setSession).catch(() => {});
+    apiFetch(`/api/sessions/${id}`, token).then(setSession).catch(() => setSession(null));
   };
 
   useEffect(() => {

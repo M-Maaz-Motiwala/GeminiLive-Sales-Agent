@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@/src/auth/AuthContext';
 import { Bot, PhoneCall, UserCheck, FileText, Wifi, Phone } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { API_BASE } from '@/src/lib/api';
+import { apiFetchList, apiFetchPublic } from '@/src/lib/api';
 import { PageHeader, StatCard, GlassCard, Badge } from '@/src/components/admin/theme';
 
 export default function Dashboard() {
@@ -11,19 +11,19 @@ export default function Dashboard() {
   const [info, setInfo] = useState<any>(null);
 
   useEffect(() => {
-    const headers = { Authorization: `Bearer ${token}` };
+    if (!token) return;
     Promise.all([
-      fetch(`${API_BASE}/api/sessions?limit=100`, { headers }).then(r => r.json()),
-      fetch(`${API_BASE}/api/leads?limit=100`, { headers }).then(r => r.json()),
-      fetch(`${API_BASE}/api/agents`, { headers }).then(r => r.json()),
-      fetch(`${API_BASE}/api/documents`, { headers }).then(r => r.json()),
-      fetch(`${API_BASE}/api/system/info`).then(r => r.json()),
+      apiFetchList('/api/sessions?limit=100', token),
+      apiFetchList('/api/leads?limit=100', token),
+      apiFetchList('/api/agents', token),
+      apiFetchList('/api/documents', token),
+      apiFetchPublic('/api/system/info'),
     ]).then(([sessions, leads, agents, docs, sysInfo]) => {
       setStats({
-        sessions: Array.isArray(sessions) ? sessions.length : 0,
-        leads: Array.isArray(leads) ? leads.length : 0,
-        agents: Array.isArray(agents) ? agents.length : 0,
-        documents: Array.isArray(docs) ? docs.length : 0,
+        sessions: sessions.length,
+        leads: leads.length,
+        agents: agents.length,
+        documents: docs.length,
       });
       setInfo(sysInfo);
     }).catch(() => {});

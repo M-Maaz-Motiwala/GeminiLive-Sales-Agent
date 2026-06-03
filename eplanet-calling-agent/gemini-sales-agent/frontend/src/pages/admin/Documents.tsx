@@ -3,7 +3,7 @@ import { useAuth } from '@/src/auth/AuthContext';
 import { Upload, Trash2, Loader2, FileText } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PageHeader, GlassCard, BtnPrimary, Badge } from '@/src/components/admin/theme';
-import { API_BASE } from '@/src/lib/api';
+import { API_BASE, apiFetchList } from '@/src/lib/api';
 
 function docBadge(status: string): 'success' | 'warn' | 'default' | 'live' {
   if (status === 'indexed') return 'success';
@@ -27,16 +27,15 @@ export default function Documents() {
 
   const agentName = (id: number) => agents.find(a => a.id === id)?.name || `Agent ${id}`;
 
-  const load = () => {
-    fetch(`${API_BASE}/api/documents`, { headers }).then(r => r.json()).then(setDocs).catch(() => {});
-  };
+  const load = () => apiFetchList('/api/documents', token).then(setDocs);
 
   useEffect(() => {
+    if (!token) return;
     load();
-    fetch(`${API_BASE}/api/agents`, { headers }).then(r => r.json()).then(d => {
+    apiFetchList('/api/agents', token).then(d => {
       setAgents(d);
       if (d[0]) setAgentId(String(d[0].id));
-    }).catch(() => {});
+    });
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
   }, [token]);

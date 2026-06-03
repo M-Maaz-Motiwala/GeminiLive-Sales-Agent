@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useAuth } from '@/src/auth/AuthContext';
 import { Plus, Pencil, Trash2, X, Phone } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { API_BASE } from '@/src/lib/api';
+import { API_BASE, apiFetch, apiFetchList, apiFetchPublic } from '@/src/lib/api';
 import { PageHeader, GlassCard, BtnPrimary, BtnGhost, Badge } from '@/src/components/admin/theme';
 import { cn } from '@/lib/utils';
 
@@ -32,10 +32,24 @@ export default function Agents() {
   const [error, setError] = useState('');
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-  const load = () => fetch(`${API_BASE}/api/agents`, { headers }).then(r => r.json()).then(setAgents).catch(() => {});
+  const [loadError, setLoadError] = useState('');
+
+  const load = async () => {
+    setLoadError('');
+    try {
+      setAgents(await apiFetchList('/api/agents', token));
+    } catch (e) {
+      setAgents([]);
+      setLoadError(e instanceof Error ? e.message : 'Failed to load agents');
+    }
+  };
+
   useEffect(() => {
+    if (!token) return;
     load();
-    fetch(`${API_BASE}/api/system/info`).then(r => r.json()).then(d => setSipServer(d.sip_server || '')).catch(() => {});
+    apiFetchPublic<{ sip_server?: string }>('/api/system/info')
+      .then(d => setSipServer(d.sip_server || ''))
+      .catch(() => {});
   }, [token]);
 
   const save = async () => {
@@ -68,6 +82,12 @@ export default function Agents() {
         subtitle="Each agent has a SIP extension — dial from Zoiper on your LAN"
         action={<BtnPrimary onClick={() => { setEditing(null); setForm({ ...EMPTY }); setError(''); setOpen(true); }}><Plus className="w-4 h-4" /> New agent</BtnPrimary>}
       />
+
+      {loadError && (
+        <p className="text-sm text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-2 mb-4">
+          {loadError}. <Link to="/admin/login" className="underline">Sign in again</Link>
+        </p>
+      )}
 
       <div className="grid gap-3">
         {agents.map(a => (

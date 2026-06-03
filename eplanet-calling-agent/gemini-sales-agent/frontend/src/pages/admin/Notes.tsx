@@ -3,7 +3,7 @@ import { useAuth } from '@/src/auth/AuthContext';
 import { StickyNote } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PageHeader, GlassCard } from '@/src/components/admin/theme';
-import { API_BASE } from '@/src/lib/api';
+import { API_BASE, apiFetchList } from '@/src/lib/api';
 
 const ENTITY_TYPES = ['lead', 'contact', 'session'];
 
@@ -14,7 +14,7 @@ export default function Notes() {
   const headers = { Authorization: `Bearer ${token}` };
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/notes?entity_type=${entityType}`, { headers }).then(r => r.json()).then(setNotes).catch(() => {});
+    apiFetchList(`/api/notes?entity_type=${entityType}`, token).then(setNotes);
   }, [token, entityType]);
 
   return (

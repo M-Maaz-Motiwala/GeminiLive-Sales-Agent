@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/src/auth/AuthContext';
 import { PageHeader, GlassCard, Badge } from '@/src/components/admin/theme';
-import { API_BASE } from '@/src/lib/api';
+import { API_BASE, apiFetchList } from '@/src/lib/api';
 
 const OUTPUT_TYPES = ['', 'lead_capture', 'action_items', 'research_report', 'code_analysis', 'summary'];
 const selectCls = 'rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-violet-500/50';
@@ -14,7 +14,7 @@ export default function Outputs() {
 
   useEffect(() => {
     const q = typeFilter ? `?output_type=${typeFilter}` : '';
-    fetch(`${API_BASE}/api/outputs${q}`, { headers }).then(r => r.json()).then(setOutputs).catch(() => {});
+    apiFetchList(`/api/outputs${q}`, token).then(setOutputs);
   }, [token, typeFilter]);
 
   return (

@@ -3,7 +3,7 @@ import { useAuth } from '@/src/auth/AuthContext';
 import { Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PageHeader, GlassCard } from '@/src/components/admin/theme';
-import { API_BASE } from '@/src/lib/api';
+import { API_BASE, apiFetchList } from '@/src/lib/api';
 
 const STATUSES = ['new', 'qualified', 'contacted', 'closed', 'lost'];
 
@@ -17,7 +17,7 @@ export default function Leads() {
 
   const load = (status = '') => {
     const q = status ? `?status=${status}` : '';
-    fetch(`${API_BASE}/api/leads${q}`, { headers }).then(r => r.json()).then(setLeads).catch(() => {});
+    apiFetchList(`/api/leads${q}`, token).then(setLeads);
   };
 
   useEffect(() => { load(statusFilter); }, [token, statusFilter]);

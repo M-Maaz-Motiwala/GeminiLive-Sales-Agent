@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@/src/auth/AuthContext';
 import { Contact } from 'lucide-react';
 import { PageHeader, GlassCard, InputField } from '@/src/components/admin/theme';
-import { API_BASE } from '@/src/lib/api';
+import { API_BASE, apiFetchList } from '@/src/lib/api';
 
 export default function Contacts() {
   const { token } = useAuth();
@@ -12,7 +12,7 @@ export default function Contacts() {
 
   const load = (q = '') => {
     const qs = q ? `?search=${encodeURIComponent(q)}` : '';
-    fetch(`${API_BASE}/api/contacts${qs}`, { headers }).then(r => r.json()).then(setContacts).catch(() => {});
+    apiFetchList(`/api/contacts${qs}`, token).then(setContacts);
   };
 
   useEffect(() => { load(); }, [token]);

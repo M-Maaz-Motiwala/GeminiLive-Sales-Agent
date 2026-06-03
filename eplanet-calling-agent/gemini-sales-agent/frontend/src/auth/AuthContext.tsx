@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
 
 interface AuthUser { id: number; email: string; full_name: string; role: string; }
 
@@ -12,7 +12,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-import { API_BASE } from '@/src/lib/api';
+import { API_BASE, setUnauthorizedHandler } from '@/src/lib/api';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('aura_token'));
@@ -20,6 +20,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const u = localStorage.getItem('aura_user');
     return u ? JSON.parse(u) : null;
   });
+
+  const logout = useCallback(() => {
+    localStorage.removeItem('aura_token');
+    localStorage.removeItem('aura_user');
+    setToken(null);
+    setUser(null);
+  }, []);
+
+  useEffect(() => {
+    setUnauthorizedHandler(logout);
+  }, [logout]);
+
+  // Reject expired/invalid tokens stored in localStorage (avoids 401 + .map crashes).
+  useEffect(() => {
+    if (!token) return;
+    fetch(`${API_BASE}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async res => {
+        if (!res.ok) {
+          logout();
+          return;
+        }
+        const me = await res.json();
+        setUser(me);
+        localStorage.setItem('aura_user', JSON.stringify(me));
+      })
+      .catch(() => logout());
+  }, [token, logout]);
 
   const login = useCallback(async (email: string, password: string) => {
     const res = await fetch(`${API_BASE}/api/auth/login`, {
@@ -39,13 +66,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('aura_user', JSON.stringify(me));
     setToken(data.access_token);
     setUser(me);
-  }, []);
-
-  const logout = useCallback(() => {
-    localStorage.removeItem('aura_token');
-    localStorage.removeItem('aura_user');
-    setToken(null);
-    setUser(null);
   }, []);
 
   return (

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '@/src/auth/AuthContext';
 import { Phone, Radio } from 'lucide-react';
 import { PageHeader, GlassCard, Badge } from '@/src/components/admin/theme';
-import { API_BASE } from '@/src/lib/api';
+import { API_BASE, apiFetchList } from '@/src/lib/api';
 
 function statusVariant(s: string): 'live' | 'success' | 'warn' | 'default' {
   if (s === 'active') return 'live';
@@ -18,7 +18,7 @@ export default function Sessions() {
   const headers = { Authorization: `Bearer ${token}` };
 
   useEffect(() => {
-    const load = () => fetch(`${API_BASE}/api/sessions`, { headers }).then(r => r.json()).then(setSessions).catch(() => {});
+    const load = () => apiFetchList('/api/sessions', token).then(setSessions);
     load();
     const t = setInterval(load, 10000);
     return () => clearInterval(t);
