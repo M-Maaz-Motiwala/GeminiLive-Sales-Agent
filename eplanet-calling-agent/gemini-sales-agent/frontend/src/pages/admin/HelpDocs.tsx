@@ -191,7 +191,7 @@ export default function HelpDocs() {
               <FlowStep step={3} icon={Database} title="Platform session + KB preload" description="POST /internal/calls/start resolves agent, preloads Pinecone chunks into system prompt, creates DB session." delay={0.1} />
               <FlowStep step={4} icon={Radio} title="Gemini Live connects" description="Bridge opens WebSocket to Gemini with agent config, tools, and merged system instruction. AUTO_GREETING triggers first speech." delay={0.15} />
               <FlowStep step={5} icon={Bot} title="Conversation loop" description="Audio streams both ways. Transcription buffered per turn. Tool calls proxy to platform. Transcripts saved to PostgreSQL." delay={0.2} />
-              <FlowStep step={6} icon={Zap} title="Call ends → post-processing" description="Summary auto-generated from merged turns. Lead agents also get lead_capture output. View in Sessions page." delay={0.25} />
+              <FlowStep step={6} icon={Zap} title="Call ends → post-processing" description="Gemini text model generates prose summary (sessions.summary), structured JSON outputs (Outputs page), session note (Notes page), and optional Lead row for qualification agents. Use Session Detail → Generate all to re-run." delay={0.25} />
             </div>
           </DocsSection>
 

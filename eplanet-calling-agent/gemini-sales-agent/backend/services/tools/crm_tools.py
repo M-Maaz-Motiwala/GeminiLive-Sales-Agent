@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 async def create_lead(db: AsyncSession, params: dict) -> dict:
+    session_id = params.get("source_session_id")
     lead = Lead(
         name=params.get("name", "Unknown"),
         email=params.get("email"),
@@ -19,6 +20,7 @@ async def create_lead(db: AsyncSession, params: dict) -> dict:
         notes=params.get("notes"),
         status=LeadStatus.new,
         tags=params.get("tags", []),
+        source_session_id=session_id,
     )
     db.add(lead)
     await db.flush()

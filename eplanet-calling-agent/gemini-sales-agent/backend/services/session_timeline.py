@@ -113,7 +113,7 @@ def _summarize_tool_result(tool_name: str, result: Any) -> str:
         n = len(result.get("results") or [])
         return f"{n} result{'s' if n != 1 else ''} found"
     if tool_name == "create_lead":
-        return f"Lead #{result.get('id', '?')} saved"
+        return f"Lead #{result.get('lead_id', result.get('id', '?'))} saved"
     if tool_name == "create_note":
         return "Note saved"
     if tool_name == "search_contacts":

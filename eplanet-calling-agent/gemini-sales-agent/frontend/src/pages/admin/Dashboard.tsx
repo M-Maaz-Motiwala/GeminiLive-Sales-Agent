@@ -29,7 +29,12 @@ export default function Dashboard() {
     }).catch(() => {});
   }, [token]);
 
-  const sipServer = info?.sip_server || '—';
+  const sipServer = info?.sip_server || info?.external_ip || '—';
+  const sipPort = info?.sip_port ? `${info.sip_port} ${info?.sip_transport || 'UDP'}` : '5060 UDP';
+  const sipUser = info?.sip_username || '1000';
+  const sipPass = info?.sip_password || info?.sip_password_hint || '1000pass';
+  const sipCodec = info?.sip_codec_label || info?.sip_codec || 'G.711 μ-law (PCMU)';
+  const isAutoIp = info?.external_ip_mode === 'auto';
 
   return (
     <div className="p-6 lg:p-10 max-w-6xl">
@@ -52,13 +57,26 @@ export default function Dashboard() {
             <h3 className="text-sm font-semibold text-white">SIP phone setup (Zoiper)</h3>
             <Badge variant="live">LAN</Badge>
           </div>
+          <p className="text-[10px] text-zinc-500 mb-3">
+            {isAutoIp
+              ? 'SIP server IP is auto-detected on each ./start.sh — value below is current.'
+              : 'SIP server IP is fixed in .env (EXTERNAL_IP).'}
+          </p>
           <dl className="space-y-3 text-sm">
+            <div className="flex justify-between items-center border-b border-white/[0.04] pb-2">
+              <dt className="text-zinc-500">SIP server</dt>
+              <dd className="font-mono text-violet-300 font-medium text-right flex items-center gap-2">
+                {sipServer}
+                {isAutoIp && sipServer !== '—' && (
+                  <Badge variant="live">auto</Badge>
+                )}
+              </dd>
+            </div>
             {[
-              ['SIP server', sipServer],
-              ['Port', '5060 UDP'],
-              ['Username', '1000'],
-              ['Password', '1000pass'],
-              ['Codec', 'G.711 μ-law (PCMU)'],
+              ['Port', sipPort],
+              ['Username', sipUser],
+              ['Password', sipPass],
+              ['Codec', sipCodec],
             ].map(([k, v]) => (
               <div key={k} className="flex justify-between border-b border-white/[0.04] pb-2">
                 <dt className="text-zinc-500">{k}</dt>

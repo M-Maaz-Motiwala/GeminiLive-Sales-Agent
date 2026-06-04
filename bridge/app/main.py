@@ -1398,19 +1398,20 @@ class GeminiLiveBridge:
             raise
 
     async def _handle_tool_call(self, session, tool_call) -> None:
-        responses = []
-        for fc in tool_call.function_calls:
+        async def run_one(fc):
             params = dict(fc.args) if fc.args else {}
             result = await self._platform_tool(fc.name, fc.id, params)
-            responses.append(
-                types.FunctionResponse(
-                    id=result.get("id", fc.id),
-                    name=result.get("name", fc.name),
-                    response=result.get("response", {}),
-                )
+            return types.FunctionResponse(
+                id=result.get("id", fc.id),
+                name=result.get("name", fc.name),
+                response=result.get("response", {}),
             )
+
+        responses = await asyncio.gather(
+            *[run_one(fc) for fc in tool_call.function_calls]
+        )
         logger.info("Tool call batch: %s", [r.name for r in responses])
-        await session.send_tool_response(function_responses=responses)
+        await session.send_tool_response(function_responses=list(responses))
 
     # ----------------------------------------------------------------- RTP
 

@@ -158,19 +158,26 @@ async def query(text: str, agent_id: Optional[int], top_k: int = 5) -> list[dict
         namespaces.insert(0, f"agent-{agent_id}")
 
     all_results = []
-    for ns in namespaces:
+    seen: set[str] = set()
+
+    async def _query_ns(ns: str) -> list[dict]:
         try:
             result = await asyncio.get_event_loop().run_in_executor(
                 None,
-                lambda ns=ns: index.query(
+                lambda: index.query(
                     vector=embedding,
                     top_k=top_k,
                     namespace=ns,
                     include_metadata=True,
                 ),
             )
+            hits = []
             for match in result.matches:
-                all_results.append(
+                key = match.metadata.get("text", "")[:80]
+                if key in seen:
+                    continue
+                seen.add(key)
+                hits.append(
                     {
                         "score": match.score,
                         "text": match.metadata.get("text", ""),
@@ -179,8 +186,14 @@ async def query(text: str, agent_id: Optional[int], top_k: int = 5) -> list[dict
                         "namespace": ns,
                     }
                 )
+            return hits
         except Exception as e:
             logger.warning("RAG query failed for namespace %s: %s", ns, e)
+            return []
+
+    namespace_results = await asyncio.gather(*[_query_ns(ns) for ns in namespaces])
+    for hits in namespace_results:
+        all_results.extend(hits)
 
     all_results.sort(key=lambda x: x["score"], reverse=True)
     return all_results[:top_k]

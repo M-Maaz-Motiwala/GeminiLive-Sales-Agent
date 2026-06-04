@@ -25,7 +25,11 @@ echo "=== Phone SIP address (.host.env) ==="
 if [ -f .host.env ]; then
   # shellcheck disable=SC1091
   . ./.host.env
-  ok "EXTERNAL_IP=${EXTERNAL_IP:-?} (use this as SIP server on your phone)"
+  ok "EXTERNAL_IP=${EXTERNAL_IP:-?} (Zoiper SIP server)"
+  ok "Port ${SIP_PORT:-5060} UDP · user ${SIP_USER:-1000} · codec ${SIP_CODEC:-PCMU}"
+  if [ "${IP_CHANGED:-0}" = "1" ]; then
+    echo "  (IP changed this run — Asterisk recreated if you used ./start.sh up)"
+  fi
 else
   fail ".host.env missing — run: ./start.sh up -d"
 fi
@@ -90,9 +94,12 @@ if [ "$ERR" -eq 0 ]; then
   echo "Phone must be on the SAME Wi-Fi as this PC (not mobile data)."
   echo ""
   echo "  SIP server:  ${EXTERNAL_IP:-<host-ip>}"
-  echo "  Port:        5060 UDP"
-  echo "  Username:    1000"
-  echo "  Password:    1000pass"
+  echo "  Port:        ${SIP_PORT:-5060} UDP"
+  echo "  Username:    ${SIP_USER:-1000}"
+  echo "  Password:    ${SIP_PASS:-1000pass}"
+  echo "  Codec:       ${SIP_CODEC:-PCMU} (G.711 μ-law)"
+  echo ""
+  echo "  IP changed?   ./scripts/refresh-ip.sh"
   echo ""
   echo "  Dial 600  = echo test"
   echo "  Dial 701  = Maya — Lead Qualifier"

@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '@/src/auth/AuthContext';
 import { PageHeader, GlassCard, Badge } from '@/src/components/admin/theme';
-import { API_BASE, apiFetchList } from '@/src/lib/api';
+import { FormattedOutput } from '@/src/components/admin/SessionTimeline';
+import { apiFetchList } from '@/src/lib/api';
 
-const OUTPUT_TYPES = ['', 'lead_capture', 'action_items', 'research_report', 'code_analysis', 'summary'];
+const OUTPUT_TYPES = ['', 'summary', 'lead_capture', 'action_items', 'research_report', 'code_analysis'];
 const selectCls = 'rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-violet-500/50';
 
 export default function Outputs() {
   const { token } = useAuth();
   const [outputs, setOutputs] = useState<any[]>([]);
   const [typeFilter, setTypeFilter] = useState('');
-  const headers = { Authorization: `Bearer ${token}` };
 
   useEffect(() => {
     const q = typeFilter ? `?output_type=${typeFilter}` : '';
@@ -21,30 +22,40 @@ export default function Outputs() {
     <div className="p-6 lg:p-8">
       <PageHeader
         title="Outputs"
-        subtitle="Structured outputs from agent sessions"
+        subtitle="Structured AI artifacts from calls — lead capture, action items, summaries"
         action={
           <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className={selectCls}>
             <option value="">All types</option>
-            {OUTPUT_TYPES.filter(Boolean).map(t => <option key={t} value={t}>{t}</option>)}
+            {OUTPUT_TYPES.filter(Boolean).map(t => (
+              <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>
+            ))}
           </select>
         }
       />
 
-      <div className="space-y-3">
+      <div className="space-y-4">
         {outputs.map(o => (
-          <GlassCard key={o.id} className="p-4">
-            <div className="flex flex-wrap items-center gap-3 mb-3">
-              <Badge variant="success">{o.output_type}</Badge>
-              <span className="text-xs text-zinc-500">Session #{o.session_id}</span>
+          <GlassCard key={o.id} className="p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <Badge variant="success">{String(o.output_type).replace(/_/g, ' ')}</Badge>
+                <Link
+                  to={`/admin/sessions/${o.session_id}`}
+                  className="text-xs text-violet-400 hover:underline"
+                >
+                  Session #{o.session_id}
+                </Link>
+              </div>
               <span className="text-[10px] text-zinc-600">{new Date(o.created_at).toLocaleString()}</span>
             </div>
-            <pre className="text-xs text-zinc-400 overflow-auto max-h-48 whitespace-pre-wrap font-mono">
-              {typeof o.content === 'string' ? o.content : JSON.stringify(o.content, null, 2)}
-            </pre>
+            <FormattedOutput outputType={String(o.output_type)} content={o.content} />
           </GlassCard>
         ))}
         {outputs.length === 0 && (
-          <GlassCard className="p-12 text-center text-sm text-zinc-500">No outputs yet.</GlassCard>
+          <GlassCard className="p-12 text-center text-sm text-zinc-500">
+            No structured outputs yet. They are generated automatically when a call ends,
+            or from Session Detail → Generate output.
+          </GlassCard>
         )}
       </div>
     </div>

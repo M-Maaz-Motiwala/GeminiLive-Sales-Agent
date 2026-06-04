@@ -1,4 +1,7 @@
-.PHONY: up down restart logs check ps rebuild bootstrap
+.PHONY: up down restart logs check ps rebuild bootstrap refresh-ip
+
+refresh-ip:
+	@./scripts/refresh-ip.sh
 
 up:
 	@./start.sh up -d --build

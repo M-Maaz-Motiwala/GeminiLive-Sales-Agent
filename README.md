@@ -111,7 +111,8 @@ Single root **`.env`** for platform, celery, and bridge.
 
 | Variable | Purpose |
 | -------- | ------- |
-| GEMINI_API_KEY | Gemini Live + embeddings |
+| GEMINI_API_KEY | Gemini Live + embeddings + summaries |
+| GEMINI_TEXT_MODEL | Post-call summaries/outputs (default `gemini-2.5-flash`) |
 | PINECONE_API_KEY | RAG vector DB — https://app.pinecone.io/ |
 | PINECONE_INDEX_NAME | Default `aura-knowledge` (auto-created) |
 | PINECONE_ENVIRONMENT | Default `us-east-1` |
@@ -121,20 +122,28 @@ Single root **`.env`** for platform, celery, and bridge.
 | ARI_* | Must match asterisk/ari.conf |
 | RTP_PORT | 40000 (ExternalMedia → bridge) |
 
-LAN IP is written to **`.host.env`** as `EXTERNAL_IP` by `./start.sh`.
+LAN IP is auto-detected into **`.host.env`** on each **`./start.sh`** (set `EXTERNAL_IP=auto` in `.env`, or a fixed IP to override). If your router assigns a new IP, run **`./scripts/refresh-ip.sh`** and update Zoiper’s SIP server.
+
+| `.env` variable | Purpose |
+| --------------- | ------- |
+| `EXTERNAL_IP` | `auto` (default) or fixed IPv4 e.g. `172.17.1.130` |
+| `SIP_PORT` | SIP UDP port (default `5060`) |
+| `SIP_USER` / `SIP_PASS` | Extension 1000 credentials |
+| `SIP_USER_1001` / `SIP_PASS_1001` | Extension 1001 credentials |
+| `SIP_CODEC` | `PCMU` (G.711 μ-law) recommended |
 
 ---
 
 ## Zoiper / SIP setup (call from your phone)
 
-Use `EXTERNAL_IP` from `./scripts/check.sh` (not 127.0.0.1 unless Zoiper is on the same machine).
+Use values from **Admin → Dashboard** or `./scripts/check.sh` (not `127.0.0.1` unless Zoiper runs on the same PC).
 
 | Field | Value |
 | ----- | ----- |
-| Username | 1000 |
-| Password | 1000pass |
-| Domain / Server | EXTERNAL_IP from .host.env |
-| Port | 5060 UDP |
+| Username | `1000` (or `SIP_USER` in `.env`) |
+| Password | `1000pass` (or `SIP_PASS` in `.env`) |
+| Domain / Server | Auto-detected LAN IP (e.g. `172.17.1.130`) |
+| Port | `5060` UDP |
 | Codecs | G.711 μ-law (PCMU) only |
 
 Tips: use headphones; disable Zoiper echo cancellation for AI calls; dial 600 for echo test first.
@@ -254,6 +263,9 @@ docker logs -f aura_celery
 
 - **No register:** same Wi‑Fi, check EXTERNAL_IP, port 5060 free
 - **No audio:** dial 600, headphones, APM_ENABLED=0
+- **Call drops at ~32s:** Asterisk Contact header / NAT — see `asterisk/pjsip.conf.template` local_net fix
+- **Empty summary/outputs:** check `GEMINI_API_KEY` and `GEMINI_TEXT_MODEL`; open Session Detail → **Generate all**
+- **Empty Notes page:** default tab is **all**; session notes auto-save after each call
 - **RAG failed:** check PINECONE_API_KEY, `docker logs aura_celery`, `make bootstrap`
 - **One call only:** hang up before redialing
 

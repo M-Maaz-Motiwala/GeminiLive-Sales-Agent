@@ -226,10 +226,9 @@ class GeminiLiveSession:
             if self.on_close:
                 await self.on_close()
 
-    async def _handle_tool_call(self, tool_call):
-        """Dispatch tool calls and send responses back to Gemini."""
-        responses = []
-        for fc in tool_call.function_calls:
+    async def _handle_tool_call(self, tool_call) -> None:
+        """Dispatch tool calls in parallel and send responses back to Gemini."""
+        async def run_one(fc):
             fr = await tool_executor.dispatch(
                 tool_name=fc.name,
                 call_id=fc.id,
@@ -238,8 +237,12 @@ class GeminiLiveSession:
                 session_id=self.db_session_id,
                 agent_id=self.agent_config.get("id"),
             )
-            responses.append(fr)
-        await self._session.send_tool_response(function_responses=responses)
+            return fr
+
+        responses = await asyncio.gather(
+            *[run_one(fc) for fc in tool_call.function_calls]
+        )
+        await self._session.send_tool_response(function_responses=list(responses))
 
     async def _persist_message(self, role: str, text: str):
         try:
@@ -259,20 +262,26 @@ class GeminiLiveSession:
                 await self._session_task
             except asyncio.CancelledError:
                 pass
+        session_id = self.db_session_id
         try:
             from sqlalchemy import update
             from backend.db.models import Session as DBSession, SessionStatus
             from datetime import datetime, timezone
             await self.db.execute(
                 update(DBSession)
-                .where(DBSession.id == self.db_session_id)
+                .where(DBSession.id == session_id)
                 .values(status=SessionStatus.ended, ended_at=datetime.now(timezone.utc))
             )
             await self.db.commit()
         except Exception as e:
             logger.warning(f"Failed to update session status: {e}")
-        session_manager.unregister(self.db_session_id)
-        logger.info(f"GeminiLiveSession {self.db_session_id} closed.")
+        session_manager.unregister(session_id)
+        logger.info(f"GeminiLiveSession {session_id} closed.")
+        try:
+            from backend.services.post_call import process_call_end
+            asyncio.create_task(process_call_end(session_id))
+        except Exception as e:
+            logger.warning(f"Failed to queue post-call for session {session_id}: {e}")
         try:
             await self.db.close()
         except Exception:

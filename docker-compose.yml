@@ -36,7 +36,6 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://aura:aura_secret@postgres:5432/aura_db
       REDIS_URL: redis://redis:6379/0
-      SIP_EXTERNAL_IP: ${EXTERNAL_IP:-}
     ports:
       - "8000:8000"
     depends_on:
@@ -72,7 +71,6 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://aura:aura_secret@postgres:5432/aura_db
       REDIS_URL: redis://redis:6379/0
-      SIP_EXTERNAL_IP: ${EXTERNAL_IP:-}
     volumes:
       - uploads_data:/app/uploads
     depends_on:
@@ -96,7 +94,6 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://aura:aura_secret@postgres:5432/aura_db
       REDIS_URL: redis://redis:6379/0
-      SIP_EXTERNAL_IP: ${EXTERNAL_IP:-}
     depends_on:
       postgres:
         condition: service_healthy

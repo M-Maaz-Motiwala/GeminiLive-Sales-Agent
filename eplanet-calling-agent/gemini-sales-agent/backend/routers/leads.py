@@ -62,6 +62,23 @@ async def get_lead(lead_id: int, db: AsyncSession = Depends(get_db), _=Depends(g
     return _out(l)
 
 
+class LeadPatch(BaseModel):
+    status: Optional[LeadStatus] = None
+    notes: Optional[str] = None
+    tags: Optional[list] = None
+
+
+@router.patch("/{lead_id}")
+async def patch_lead(lead_id: int, body: LeadPatch, db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
+    result = await db.execute(select(Lead).where(Lead.id == lead_id))
+    l = result.scalar_one_or_none()
+    if not l:
+        raise HTTPException(404, "Lead not found")
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(l, field, value)
+    return _out(l)
+
+
 @router.put("/{lead_id}")
 async def update_lead(lead_id: int, body: LeadIn, db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
     result = await db.execute(select(Lead).where(Lead.id == lead_id))

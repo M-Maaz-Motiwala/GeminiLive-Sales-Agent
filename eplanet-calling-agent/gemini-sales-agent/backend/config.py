@@ -7,6 +7,7 @@ class Settings(BaseSettings):
 
     # Gemini
     gemini_api_key: str = ""
+    gemini_text_model: str = "gemini-2.5-flash"
 
     # Database
     database_url: str = "postgresql+asyncpg://aura:aura@localhost:5432/aura"

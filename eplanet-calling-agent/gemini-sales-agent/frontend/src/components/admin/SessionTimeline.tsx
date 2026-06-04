@@ -144,26 +144,55 @@ export function FormattedOutput({ outputType, content }: { outputType: string; c
   const c = typeof content === 'string' ? (() => { try { return JSON.parse(content); } catch { return content; } })() : content;
 
   if (outputType === 'lead_capture' && typeof c === 'object' && c !== null) {
-    const o = c as Record<string, string>;
-    const fields = ['name', 'email', 'phone', 'company', 'notes'].filter(k => o[k]);
+    const o = c as Record<string, unknown>;
+    const fields = ['name', 'email', 'phone', 'company', 'interest_level', 'notes'].filter(k => o[k] != null && o[k] !== '');
+    const keyNeeds = o.key_needs;
     return (
       <dl className="space-y-2">
         {fields.map(k => (
           <div key={k}>
             <dt className="text-[10px] uppercase tracking-wider text-zinc-500">{k.replace(/_/g, ' ')}</dt>
-            <dd className="text-sm text-zinc-300">{o[k]}</dd>
+            <dd className="text-sm text-zinc-300">{String(o[k])}</dd>
           </div>
         ))}
+        {Array.isArray(keyNeeds) && keyNeeds.length > 0 && (
+          <div>
+            <dt className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Key needs</dt>
+            <dd className="text-sm text-zinc-300">
+              <ul className="list-disc list-inside space-y-0.5">
+                {keyNeeds.map((item, i) => <li key={i}>{String(item)}</li>)}
+              </ul>
+            </dd>
+          </div>
+        )}
       </dl>
     );
   }
 
-  if (outputType === 'action_items' && Array.isArray(c)) {
+  if (outputType === 'action_items' && typeof c === 'object' && c !== null) {
+    const items = (c as { items?: unknown[] }).items || (Array.isArray(c) ? c : []);
     return (
-      <ul className="list-disc list-inside space-y-1 text-sm text-zinc-300">
-        {c.map((item, i) => <li key={i}>{typeof item === 'string' ? item : JSON.stringify(item)}</li>)}
+      <ul className="space-y-2">
+        {items.map((item, i) => {
+          if (typeof item === 'string') return <li key={i} className="text-sm text-zinc-300">• {item}</li>;
+          const o = item as Record<string, string>;
+          return (
+            <li key={i} className="text-sm text-zinc-300 border-l-2 border-violet-500/40 pl-3 py-1">
+              <div>{o.task || JSON.stringify(item)}</div>
+              {(o.owner || o.priority || o.due_date) && (
+                <div className="text-[10px] text-zinc-500 mt-0.5">
+                  {[o.owner, o.priority, o.due_date].filter(Boolean).join(' · ')}
+                </div>
+              )}
+            </li>
+          );
+        })}
       </ul>
     );
+  }
+
+  if (outputType === 'summary' && typeof c === 'object' && c !== null) {
+    return <StructuredSummaryCard content={c} />;
   }
 
   if (typeof c === 'string') {
@@ -174,6 +203,44 @@ export function FormattedOutput({ outputType, content }: { outputType: string; c
     <pre className="text-xs text-zinc-400 overflow-auto max-h-48 whitespace-pre-wrap font-mono">
       {JSON.stringify(c, null, 2)}
     </pre>
+  );
+}
+
+export function StructuredSummaryCard({ content }: { content: unknown }) {
+  const c = typeof content === 'string' ? (() => { try { return JSON.parse(content); } catch { return null; } })() : content;
+  if (!c || typeof c !== 'object') return null;
+  const o = c as Record<string, unknown>;
+
+  return (
+    <div className="space-y-3">
+      {o.headline && (
+        <p className="text-sm font-medium text-white">{String(o.headline)}</p>
+      )}
+      {o.summary && (
+        <p className="text-sm text-zinc-300 leading-relaxed">{String(o.summary)}</p>
+      )}
+      {Array.isArray(o.topics_covered) && o.topics_covered.length > 0 && (
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Topics</div>
+          <div className="flex flex-wrap gap-1">
+            {o.topics_covered.map((t, i) => (
+              <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-zinc-400">{String(t)}</span>
+            ))}
+          </div>
+        </div>
+      )}
+      {Array.isArray(o.next_steps) && o.next_steps.length > 0 && (
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Next steps</div>
+          <ul className="text-xs text-zinc-400 space-y-1 list-disc list-inside">
+            {o.next_steps.map((s, i) => <li key={i}>{String(s)}</li>)}
+          </ul>
+        </div>
+      )}
+      {o.sentiment && (
+        <span className="text-[10px] uppercase tracking-wide text-cyan-400/80">{String(o.sentiment)}</span>
+      )}
+    </div>
   );
 }
 
