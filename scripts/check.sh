@@ -85,6 +85,16 @@ else
 fi
 
 echo ""
+echo "=== Asterisk SIP extensions ==="
+for ext in 1000 1001 1002; do
+  if docker exec asterisk asterisk -rx "pjsip show endpoint ${ext}" 2>/dev/null | grep -q "Endpoint:"; then
+    ok "extension ${ext} in pjsip"
+  else
+    fail "extension ${ext} missing — run: ./start.sh up -d --force-recreate asterisk"
+  fi
+done
+
+echo ""
 if [ "$ERR" -eq 0 ]; then
   echo -e "${GREEN}All checks passed.${NC}"
   echo ""
@@ -95,8 +105,8 @@ if [ "$ERR" -eq 0 ]; then
   echo ""
   echo "  SIP server:  ${EXTERNAL_IP:-<host-ip>}"
   echo "  Port:        ${SIP_PORT:-5060} UDP"
-  echo "  Username:    ${SIP_USER:-1000}"
-  echo "  Password:    ${SIP_PASS:-1000pass}"
+  echo "  Username:    ${SIP_USER:-1000} (inbound) · ${SIP_USER_1001:-1001} / ${SIP_USER_1002:-1002} (outbound lab)"
+  echo "  Password:    ${SIP_PASS:-1000pass} · ${SIP_PASS_1001:-1001pass} · ${SIP_PASS_1002:-1002pass}"
   echo "  Codec:       ${SIP_CODEC:-PCMU} (G.711 μ-law)"
   echo ""
   echo "  IP changed?   ./scripts/refresh-ip.sh"

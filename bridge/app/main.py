@@ -1,8 +1,8 @@
 """FastAPI bridge: Asterisk ARI/ExternalMedia <-> Gemini Live.
 
-Single-call demo. One Asterisk channel at a time enters Stasis, we attach an
-ExternalMedia RTP leg pointed at this container's UDP port, and we relay
-audio to/from a per-call Gemini Live WebSocket session.
+Concurrent-call bridge. Each Asterisk channel entering Stasis gets its own
+ExternalMedia RTP leg on a dedicated UDP port and a per-call Gemini Live
+WebSocket session.
 
 Audio path follows the pattern used by Google's official
 gemini-live-telephony reference (GoogleCloudPlatform/generative-ai) plus
@@ -72,6 +72,7 @@ from pydantic import BaseModel
 from google import genai
 from google.genai import types
 
+from app.call_session import CallSession
 from app.token_meter import SessionTokenUsage, extract_usage_metadata
 
 try:
@@ -460,7 +461,9 @@ class GeminiLiveBridge:
         self.ari_host = getenv("ARI_HOST", "asterisk")
         self.ari_port = int(getenv("ARI_PORT", "8088"))
 
-        self.rtp_port = int(getenv("RTP_PORT", "40000"))
+        self.rtp_port_base = int(os.getenv("RTP_PORT_BASE", "40000"))
+        self.rtp_port_count = int(os.getenv("RTP_PORT_COUNT", "50"))
+        self.max_concurrent_calls = int(os.getenv("MAX_CONCURRENT_CALLS", "5"))
         # Hostname/IP Asterisk uses in ExternalMedia (docker DNS name by default).
         self.external_media_host = os.getenv("EXTERNAL_MEDIA_HOST", "bridge")
         self._asterisk_rtp_host_ip: str = ""
@@ -469,30 +472,14 @@ class GeminiLiveBridge:
 
         self.http: Optional[httpx.AsyncClient] = None
         self.ari_ws: Optional[websockets.WebSocketClientProtocol] = None
-        self.session: Optional[object] = None
-        self.session_ready = asyncio.Event()
-
-        self.state = CallState()
-
-        self.rtp_transport: Optional[asyncio.DatagramTransport] = None
-        self.rtp_protocol: Optional[asyncio.DatagramProtocol] = None
-
-        # 20 ms PCM16-16k chunks toward Gemini (drained at ~50 Hz).
-        self.audio_ingest_queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=500)
-        # 20 ms ulaw payloads toward Asterisk; drained at 50 Hz by the pacer.
-        self.rtp_out_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=1000)
 
         self._tasks: list[asyncio.Task] = []
-        # Per-call Gemini session task. Re-created on every StasisStart
-        # and cancelled on cleanup. We deliberately do NOT keep a
-        # bridge-global Gemini session because that leaks conversation
-        # context, VAD state, and buffered audio across calls. This
-        # matches Google's official telephony reference (run_gemini_session
-        # lives for the duration of a single call) and the React
-        # gemini-sales-agent (session per connect()).
-        self._gemini_task: Optional[asyncio.Task] = None
-        self._call_active = asyncio.Event()
         self._stopping = asyncio.Event()
+        self._calls: dict[str, CallSession] = {}
+        self._port_to_channel: dict[int, str] = {}
+        self._free_ports: list[int] = list(
+            range(self.rtp_port_base, self.rtp_port_base + self.rtp_port_count)
+        )
 
         self.platform_url = os.getenv("PLATFORM_URL", "").rstrip("/")
         self.platform_token = os.getenv("BRIDGE_INTERNAL_TOKEN", "")
@@ -525,13 +512,26 @@ class GeminiLiveBridge:
             )
         return self._resolve_udp_host(host)
 
-    def _send_rtp(self, packet: bytes, addr: tuple[str, int]) -> None:
-        """Send RTP, ensuring the destination host is a numeric IP."""
+    def _send_rtp_for_call(self, call: CallSession, packet: bytes, addr: tuple[str, int]) -> None:
         host, port = addr
         if not host.replace(".", "").isdigit():
             host = self._resolve_udp_host(host)
-        assert self.rtp_transport is not None
-        self.rtp_transport.sendto(packet, (host, port))
+        if call.rtp_transport is None:
+            raise RuntimeError(f"RTP transport missing for call {call.human_channel_id}")
+        call.rtp_transport.sendto(packet, (host, port))
+
+    def _allocate_rtp_port(self, channel_id: str) -> int:
+        if not self._free_ports:
+            raise RuntimeError("No free RTP ports available")
+        port = self._free_ports.pop(0)
+        self._port_to_channel[port] = channel_id
+        return port
+
+    def _release_rtp_port(self, port: int) -> None:
+        self._port_to_channel.pop(port, None)
+        if port and port not in self._free_ports:
+            self._free_ports.append(port)
+            self._free_ports.sort()
 
     async def start(self) -> None:
         self.http = httpx.AsyncClient(
@@ -539,14 +539,6 @@ class GeminiLiveBridge:
             auth=(self.ari_user, self.ari_pass),
             timeout=30.0,
         )
-
-        loop = asyncio.get_running_loop()
-        transport, protocol = await loop.create_datagram_endpoint(
-            lambda: RTPProtocol(self),
-            local_addr=("0.0.0.0", self.rtp_port),
-        )
-        self.rtp_transport = transport
-        self.rtp_protocol = protocol
 
         # Only needed when Asterisk runs on host network (loopback in channel vars).
         self._asterisk_rtp_host_ip = ""
@@ -564,7 +556,6 @@ class GeminiLiveBridge:
         # and disconnected in cleanup_call.
         await self._wait_for_asterisk_ari()
         self._tasks.append(asyncio.create_task(self._ari_event_loop(), name="ari-event-loop"))
-        self._tasks.append(asyncio.create_task(self._rtp_pacer_loop(), name="rtp-pacer-loop"))
         self._tasks.append(asyncio.create_task(self._stats_loop(), name="stats-loop"))
 
         apm_status = "off"
@@ -582,9 +573,9 @@ class GeminiLiveBridge:
             "auto_greet=%s",
             self.gemini_model,
             self.gemini_voice,
-            self.rtp_port,
+            f"{self.rtp_port_base}+{self.rtp_port_count}",
             self.external_media_host,
-            self.rtp_port,
+            self.rtp_port_base,
             INBOUND_GAIN,
             apm_status,
             GEMINI_CHUNK_MS,
@@ -597,107 +588,105 @@ class GeminiLiveBridge:
         """Every 3 seconds during an active call, log audio flow counters."""
         while not self._stopping.is_set():
             await asyncio.sleep(3.0)
-            if not self.state.active:
+            if not self._calls:
                 continue
-            now = time.monotonic()
-            since_user = (
-                f"{now - self.state.last_user_tx_ts:.1f}s"
-                if self.state.last_user_tx_ts
-                else "never"
-            )
-            since_gem = (
-                f"{now - self.state.last_gemini_audio_ts:.1f}s"
-                if self.state.last_gemini_audio_ts
-                else "never"
-            )
-            # in_rms_peak is in PCM16 units (0..32767). >=2000 = clearly
-            # audible speech, ~500-1500 = quiet speech, <300 = effectively
-            # silence/line noise.
-            rms_peak = self.state.in_rms_peak
-            rms_mean = (
-                self.state.in_rms_sum // self.state.in_rms_count
-                if self.state.in_rms_count
-                else 0
-            )
-            self.state.in_rms_peak = 0
-            self.state.in_rms_sum = 0
-            self.state.in_rms_count = 0
-            apm_rms_peak = self.state.apm_rms_peak
-            apm_rms_mean = (
-                self.state.apm_rms_sum // self.state.apm_rms_count
-                if self.state.apm_rms_count
-                else 0
-            )
-            self.state.apm_rms_peak = 0
-            self.state.apm_rms_sum = 0
-            self.state.apm_rms_count = 0
+            for call in list(self._calls.values()):
+                state = call.state
+                now = time.monotonic()
+                since_user = (
+                    f"{now - state.last_user_tx_ts:.1f}s"
+                    if state.last_user_tx_ts
+                    else "never"
+                )
+                since_gem = (
+                    f"{now - state.last_gemini_audio_ts:.1f}s"
+                    if state.last_gemini_audio_ts
+                    else "never"
+                )
+                # in_rms_peak is in PCM16 units (0..32767). >=2000 = clearly
+                # audible speech, ~500-1500 = quiet speech, <300 = effectively
+                # silence/line noise.
+                rms_peak = state.in_rms_peak
+                rms_mean = (
+                    state.in_rms_sum // state.in_rms_count
+                    if state.in_rms_count
+                    else 0
+                )
+                state.in_rms_peak = 0
+                state.in_rms_sum = 0
+                state.in_rms_count = 0
+                apm_rms_peak = state.apm_rms_peak
+                apm_rms_mean = (
+                    state.apm_rms_sum // state.apm_rms_count
+                    if state.apm_rms_count
+                    else 0
+                )
+                state.apm_rms_peak = 0
+                state.apm_rms_sum = 0
+                state.apm_rms_count = 0
 
-            # Watchdog: caller audio absent for too long. Almost always
-            # the softphone auto-muting on speaker output.
-            if (
-                rms_peak < 100
-                and self.state.rtp_in_frames > 50
-                and self._call_active.is_set()
-                and self.state.human_channel_id
-            ):
-                self.state.silent_windows += 1
-                if self.state.silent_windows == 3:
-                    logger.warning(
-                        "No caller audio detected for ~9s while RTP "
-                        "packets ARE arriving (rms_peak=%d). The "
-                        "softphone is likely auto-muting your mic in "
-                        "response to the AI playing through your "
-                        "speakers. Plug in headphones or test from a "
-                        "separate device. (Disable Zoiper's 'Echo "
-                        "Cancellation' under Settings > Audio Codecs "
-                        "if using Zoiper.)",
-                        rms_peak,
-                    )
-            else:
-                self.state.silent_windows = 0
-            speech_prob = None
-            if self.state.apm is not None:
-                try:
-                    speech_prob = float(self.state.apm.speech_probability())
-                except Exception:
-                    speech_prob = None
-            logger.info(
-                "STATS rtp_in=%d rtp_out=%d gemini_in=%d (%dB) gemini_out=%dB "
-                "turns_complete=%d interruptions=%d last_user_tx=%s last_gem_audio=%s "
-                "q_in=%d q_out=%d in_rms=p%d/m%d apm_rms=p%d/m%d gated=%d "
-                "apm_frames=%d far_buf=%dB apm_speech_prob=%s",
-                self.state.rtp_in_frames,
-                self.state.rtp_out_frames,
-                self.state.gemini_in_chunks,
-                self.state.gemini_in_bytes,
-                self.state.gemini_out_bytes,
-                self.state.gemini_turn_completes,
-                self.state.gemini_interruptions,
-                since_user,
-                since_gem,
-                self.audio_ingest_queue.qsize(),
-                self.rtp_out_queue.qsize(),
-                rms_peak,
-                rms_mean,
-                apm_rms_peak,
-                apm_rms_mean,
-                self.state.gated_in_frames,
-                self.state.apm_frames,
-                len(self.state.far_end_buf),
-                f"{speech_prob:.2f}" if speech_prob is not None else "n/a",
-            )
+                # Watchdog: caller audio absent for too long. Almost always
+                # the softphone auto-muting on speaker output.
+                if (
+                    rms_peak < 100
+                    and state.rtp_in_frames > 50
+                    and call.call_active.is_set()
+                    and state.human_channel_id
+                ):
+                    state.silent_windows += 1
+                    if state.silent_windows == 3:
+                        logger.warning(
+                            "No caller audio detected for ~9s while RTP "
+                            "packets ARE arriving (rms_peak=%d). The "
+                            "softphone is likely auto-muting your mic in "
+                            "response to the AI playing through your "
+                            "speakers. Plug in headphones or test from a "
+                            "separate device. (Disable Zoiper's 'Echo "
+                            "Cancellation' under Settings > Audio Codecs "
+                            "if using Zoiper.)",
+                            rms_peak,
+                        )
+                else:
+                    state.silent_windows = 0
+                speech_prob = None
+                if state.apm is not None:
+                    try:
+                        speech_prob = float(state.apm.speech_probability())
+                    except Exception:
+                        speech_prob = None
+                logger.info(
+                    "STATS call=%s port=%d rtp_in=%d rtp_out=%d gemini_in=%d (%dB) gemini_out=%dB "
+                    "turns_complete=%d interruptions=%d last_user_tx=%s last_gem_audio=%s "
+                    "q_in=%d q_out=%d in_rms=p%d/m%d apm_rms=p%d/m%d gated=%d "
+                    "apm_frames=%d far_buf=%dB apm_speech_prob=%s",
+                    call.human_channel_id,
+                    call.rtp_port,
+                    state.rtp_in_frames,
+                    state.rtp_out_frames,
+                    state.gemini_in_chunks,
+                    state.gemini_in_bytes,
+                    state.gemini_out_bytes,
+                    state.gemini_turn_completes,
+                    state.gemini_interruptions,
+                    since_user,
+                    since_gem,
+                    call.audio_ingest_queue.qsize(),
+                    call.rtp_out_queue.qsize(),
+                    rms_peak,
+                    rms_mean,
+                    apm_rms_peak,
+                    apm_rms_mean,
+                    state.gated_in_frames,
+                    state.apm_frames,
+                    len(state.far_end_buf),
+                    f"{speech_prob:.2f}" if speech_prob is not None else "n/a",
+                )
 
     async def stop(self) -> None:
         self._stopping.set()
-        self._call_active.clear()
 
-        if self._gemini_task is not None and not self._gemini_task.done():
-            self._gemini_task.cancel()
-            try:
-                await self._gemini_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            self._gemini_task = None
+        for call in list(self._calls.values()):
+            await self.cleanup_call(call)
 
         for task in self._tasks:
             task.cancel()
@@ -716,9 +705,6 @@ class GeminiLiveBridge:
 
         if self.http is not None:
             await self.http.aclose()
-
-        if self.rtp_transport is not None:
-            self.rtp_transport.close()
 
     # ------------------------------------------------------------------ ARI
 
@@ -783,11 +769,17 @@ class GeminiLiveBridge:
 
         if args and args[0] == "external_media":
             logger.info("ExternalMedia channel entered Stasis: %s", channel_id)
-            self.state.external_channel_id = channel_id
+            for call in self._calls.values():
+                if call.state.external_channel_id == channel_id:
+                    return
             return
 
-        if self.state.active:
-            logger.warning("A call is already active; hanging up new channel %s", channel_id)
+        if len(self._calls) >= self.max_concurrent_calls:
+            logger.warning(
+                "Max concurrent calls reached (%d); hanging up channel %s",
+                self.max_concurrent_calls,
+                channel_id,
+            )
             try:
                 assert self.http is not None
                 await self.http.delete(f"/channels/{channel_id}")
@@ -795,11 +787,11 @@ class GeminiLiveBridge:
                 pass
             return
 
-        self.state = CallState()
-        self.state.active = True
-        self.state.human_channel_id = channel_id
-        self.state.apm = _build_apm()
-        if self.state.apm is not None:
+        state = CallState()
+        state.active = True
+        state.human_channel_id = channel_id
+        state.apm = _build_apm()
+        if state.apm is not None:
             logger.info(
                 "APM enabled per-call: aec=%s ns=%s(level=%d) agc=%s(max=%.0fdB) "
                 "hp=%s stream_delay=%dms",
@@ -811,10 +803,29 @@ class GeminiLiveBridge:
                 APM_HP,
                 APM_STREAM_DELAY_MS,
             )
+        try:
+            rtp_port = self._allocate_rtp_port(channel_id)
+        except RuntimeError:
+            logger.warning("No free RTP ports; hanging up channel %s", channel_id)
+            try:
+                assert self.http is not None
+                await self.http.delete(f"/channels/{channel_id}")
+            except Exception:
+                pass
+            return
+        call = CallSession(human_channel_id=channel_id, state=state, rtp_port=rtp_port)
+        self._calls[channel_id] = call
 
         assert self.http is not None
 
         try:
+            loop = asyncio.get_running_loop()
+            transport, _protocol = await loop.create_datagram_endpoint(
+                lambda: RTPProtocol(self, call),
+                local_addr=("0.0.0.0", call.rtp_port),
+            )
+            call.rtp_transport = transport
+
             ring_started = time.monotonic()
             caller = channel.get("caller") or {}
             caller_id = caller.get("number") or channel.get("name")
@@ -836,9 +847,10 @@ class GeminiLiveBridge:
                 if len(args) > 2 and str(args[2]).isdigit():
                     lead_id = int(args[2])
 
-            self.state.call_direction = direction
+            call.state.call_direction = direction
 
             await self._platform_call_start(
+                call,
                 channel_id,
                 caller_id,
                 agent_slug,
@@ -851,9 +863,12 @@ class GeminiLiveBridge:
             inbound_ringback = use_inbound_ringback(direction)
 
             # 1) Open Gemini while the phone is still ringing (not answered).
-            self._call_active.set()
-            self._gemini_task = asyncio.create_task(
-                self._gemini_loop(), name=f"gemini-loop-{channel_id}"
+            call.call_active.set()
+            call.gemini_task = asyncio.create_task(
+                self._gemini_loop(call), name=f"gemini-loop-{channel_id}"
+            )
+            call.pacer_task = asyncio.create_task(
+                self._rtp_pacer_loop(call), name=f"rtp-pacer-{channel_id}"
             )
 
             # 2) Inbound only: ringback while Gemini connects. Outbound prospects
@@ -877,7 +892,7 @@ class GeminiLiveBridge:
             # 3) Wait for Gemini session (with timeout).
             try:
                 await asyncio.wait_for(
-                    self.session_ready.wait(),
+                    call.session_ready.wait(),
                     timeout=GEMINI_READY_TIMEOUT_SEC,
                 )
             except asyncio.TimeoutError:
@@ -886,7 +901,7 @@ class GeminiLiveBridge:
                     GEMINI_READY_TIMEOUT_SEC,
                     channel_id,
                 )
-                await self.cleanup_call()
+                await self.cleanup_call(call)
                 try:
                     await self.http.delete(f"/channels/{channel_id}")
                 except Exception:
@@ -912,10 +927,10 @@ class GeminiLiveBridge:
             bridge_resp = await self.http.post("/bridges", params={"type": "mixing"})
             bridge_resp.raise_for_status()
             bridge_obj = bridge_resp.json()
-            self.state.bridge_id = bridge_obj["id"]
+            call.state.bridge_id = bridge_obj["id"]
 
             await self.http.post(
-                f"/bridges/{self.state.bridge_id}/addChannel",
+                f"/bridges/{call.state.bridge_id}/addChannel",
                 params={"channel": channel_id},
             )
 
@@ -923,7 +938,7 @@ class GeminiLiveBridge:
                 "/channels/externalMedia",
                 params={
                     "app": self.ari_app,
-                    "external_host": f"{self.external_media_host}:{self.rtp_port}",
+                    "external_host": f"{self.external_media_host}:{call.rtp_port}",
                     "format": "ulaw",
                     "direction": "both",
                     "data": "external_media",
@@ -931,28 +946,29 @@ class GeminiLiveBridge:
             )
             ext_resp.raise_for_status()
             ext_channel = ext_resp.json()
-            self.state.external_channel_id = ext_channel["id"]
+            call.state.external_channel_id = ext_channel["id"]
 
             await self.http.post(
-                f"/bridges/{self.state.bridge_id}/addChannel",
-                params={"channel": self.state.external_channel_id},
+                f"/bridges/{call.state.bridge_id}/addChannel",
+                params={"channel": call.state.external_channel_id},
             )
 
-            await self._bootstrap_external_rtp(self.state.external_channel_id)
+            await self._bootstrap_external_rtp(call, call.state.external_channel_id)
 
             logger.info(
-                "Call ready: human=%s bridge=%s external=%s (setup %.1fs)",
-                self.state.human_channel_id,
-                self.state.bridge_id,
-                self.state.external_channel_id,
+                "Call ready: human=%s bridge=%s external=%s port=%d (setup %.1fs)",
+                call.state.human_channel_id,
+                call.state.bridge_id,
+                call.state.external_channel_id,
+                call.rtp_port,
                 time.monotonic() - ring_started,
             )
 
         except Exception:
             logger.exception("Failed to set up call %s", channel_id)
-            await self.cleanup_call()
+            await self.cleanup_call(call)
 
-    async def _bootstrap_external_rtp(self, external_channel_id: str) -> None:
+    async def _bootstrap_external_rtp(self, call: CallSession, external_channel_id: str) -> None:
         """Kick-start Asterisk UnicastRTP strict-RTP with outbound silence.
 
         ExternalMedia often waits for the first RTP from us before it
@@ -961,7 +977,7 @@ class GeminiLiveBridge:
         phone→Asterisk leg is still learning).
         """
         assert self.http is not None
-        if self.rtp_transport is None:
+        if call.rtp_transport is None:
             return
 
         try:
@@ -983,7 +999,7 @@ class GeminiLiveBridge:
                     "Could not read UnicastRTP vars for %s", external_channel_id
                 )
                 return
-            self.state.asterisk_rtp_addr = (host, port)
+            call.state.asterisk_rtp_addr = (host, port)
             logger.info(
                 "ExternalMedia RTP send target: %s:%d (Asterisk UnicastRTP listener)",
                 host,
@@ -997,38 +1013,38 @@ class GeminiLiveBridge:
         for _ in range(25):
             packet = build_rtp_packet(
                 payload=silence,
-                sequence_number=self.state.tx_seq,
-                timestamp=self.state.tx_timestamp,
-                ssrc=self.state.tx_ssrc,
+                sequence_number=call.state.tx_seq,
+                timestamp=call.state.tx_timestamp,
+                ssrc=call.state.tx_ssrc,
                 payload_type=0,
             )
             try:
-                self._send_rtp(packet, self.state.asterisk_rtp_addr)
+                self._send_rtp_for_call(call, packet, call.state.asterisk_rtp_addr)
             except Exception:
                 logger.exception("Bootstrap RTP send failed")
                 break
-            self.state.tx_seq = (self.state.tx_seq + 1) & 0xFFFF
-            self.state.tx_timestamp = (
-                self.state.tx_timestamp + SAMPLES_PER_FRAME_8K
+            call.state.tx_seq = (call.state.tx_seq + 1) & 0xFFFF
+            call.state.tx_timestamp = (
+                call.state.tx_timestamp + SAMPLES_PER_FRAME_8K
             ) & 0xFFFFFFFF
-            self.state.last_outbound_rtp_ts = time.monotonic()
-            self.state.rtp_out_frames += 1
+            call.state.last_outbound_rtp_ts = time.monotonic()
+            call.state.rtp_out_frames += 1
             await asyncio.sleep(PTIME_MS / 1000.0)
         logger.info(
             "Bootstrap sent %d RTP frames to Asterisk at %s:%d",
             25,
-            self.state.asterisk_rtp_addr[0],
-            self.state.asterisk_rtp_addr[1],
+            call.state.asterisk_rtp_addr[0],
+            call.state.asterisk_rtp_addr[1],
         )
 
     async def _handle_stasis_end(self, event: dict) -> None:
         channel_id = event["channel"]["id"]
-
-        if channel_id == self.state.external_channel_id:
-            logger.info("External media channel ended: %s", channel_id)
-            return
-
-        if channel_id != self.state.human_channel_id:
+        call = self._calls.get(channel_id)
+        if call is None:
+            for active in self._calls.values():
+                if active.state.external_channel_id == channel_id:
+                    logger.info("External media channel ended: %s", channel_id)
+                    return
             return
 
         logger.info(
@@ -1037,45 +1053,61 @@ class GeminiLiveBridge:
             event.get("channel", {}).get("cause", "?"),
             event.get("channel", {}).get("cause_txt", ""),
         )
-        await self.cleanup_call()
+        await self.cleanup_call(call)
 
-    async def cleanup_call(self) -> None:
+    async def cleanup_call(self, call: CallSession) -> None:
         # Flush any buffered transcript before ending the platform session.
-        await self._flush_all_transcripts()
-        # Notify platform while session metadata is still in self.state.
-        await self._platform_call_end()
+        await self._flush_all_transcripts(call)
+        # Notify platform while session metadata is still attached.
+        await self._platform_call_end(call)
 
         # Stop the per-call Gemini session FIRST so it stops touching
         # state/queues we're about to reset. The async with inside
         # _gemini_loop will close the WebSocket cleanly on cancellation.
-        self._call_active.clear()
-        if self._gemini_task is not None and not self._gemini_task.done():
-            self._gemini_task.cancel()
+        call.call_active.clear()
+        if call.gemini_task is not None and not call.gemini_task.done():
+            call.gemini_task.cancel()
             try:
-                await self._gemini_task
+                await call.gemini_task
             except (asyncio.CancelledError, Exception):
                 pass
-        self._gemini_task = None
-        self.session_ready.clear()
-        self.session = None
+        call.gemini_task = None
+        if call.pacer_task is not None and not call.pacer_task.done():
+            call.pacer_task.cancel()
+            try:
+                await call.pacer_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        call.pacer_task = None
+        call.session_ready.clear()
+        call.session = None
 
         if self.http is not None:
             try:
-                if self.state.external_channel_id:
-                    await self.http.delete(f"/channels/{self.state.external_channel_id}")
+                if call.state.external_channel_id:
+                    await self.http.delete(f"/channels/{call.state.external_channel_id}")
             except Exception:
                 pass
 
             try:
-                if self.state.bridge_id:
-                    await self.http.delete(f"/bridges/{self.state.bridge_id}")
+                if call.state.bridge_id:
+                    await self.http.delete(f"/bridges/{call.state.bridge_id}")
             except Exception:
                 pass
 
-        self.state = CallState()
-        self._drain_queue(self.audio_ingest_queue)
-        self._drain_queue(self.rtp_out_queue)
-        logger.info("Call cleaned up; Gemini session closed")
+        if call.rtp_transport is not None:
+            call.rtp_transport.close()
+            call.rtp_transport = None
+        self._drain_queue(call.audio_ingest_queue)
+        self._drain_queue(call.rtp_out_queue)
+        self._release_rtp_port(call.rtp_port)
+        self._calls.pop(call.human_channel_id, None)
+        logger.info(
+            "Call cleaned up; channel=%s port=%d active_calls=%d",
+            call.human_channel_id,
+            call.rtp_port,
+            len(self._calls),
+        )
 
     @staticmethod
     def _drain_queue(q: asyncio.Queue) -> None:
@@ -1100,8 +1132,11 @@ class GeminiLiveBridge:
         caller_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Originate an outbound call via ARI; StasisStart loads platform config."""
-        if self.state.active:
-            raise HTTPException(status_code=409, detail="Bridge busy with an active call")
+        if len(self._calls) >= self.max_concurrent_calls:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Bridge busy ({self.max_concurrent_calls} active call limit reached)",
+            )
         assert self.http is not None
 
         cid = (caller_id or os.getenv("OUTBOUND_DEFAULT_CALLER_ID", "1000")).strip()
@@ -1145,6 +1180,7 @@ class GeminiLiveBridge:
 
     async def _platform_call_start(
         self,
+        call: CallSession,
         channel_id: str,
         caller_id: Optional[str],
         agent_slug: Optional[str] = None,
@@ -1155,7 +1191,8 @@ class GeminiLiveBridge:
         dialed_endpoint: Optional[str] = None,
     ) -> None:
         """Load per-call agent config from the platform API."""
-        self.state.call_started_at = time.monotonic()
+        state = call.state
+        state.call_started_at = time.monotonic()
         fallback = {
             "model": self.gemini_model,
             "voice": self.gemini_voice,
@@ -1164,7 +1201,7 @@ class GeminiLiveBridge:
             "agent_id": None,
         }
         if not self.platform_url:
-            self.state.agent_config = fallback
+            state.agent_config = fallback
             return
         try:
             assert self.http is not None
@@ -1189,30 +1226,30 @@ class GeminiLiveBridge:
             )
             resp.raise_for_status()
             cfg = resp.json()
-            self.state.platform_session_id = cfg.get("session_id")
-            self.state.agent_config = cfg
+            state.platform_session_id = cfg.get("session_id")
+            state.agent_config = cfg
             logger.info(
                 "Platform call session=%s agent=%s",
-                self.state.platform_session_id,
+                state.platform_session_id,
                 cfg.get("agent_slug", "?"),
             )
         except Exception:
             logger.exception("Platform /internal/calls/start failed; using fallback config")
-            self.state.agent_config = fallback
+            state.agent_config = fallback
 
-        active_cfg = self.state.agent_config or {}
+        active_cfg = state.agent_config or {}
         instruction = active_cfg.get("system_instruction") or SYSTEM_PROMPT
-        self.state.token_usage.add_text_context(instruction)
+        state.token_usage.add_text_context(instruction)
 
-    async def _platform_transcript(self, role: str, text: str) -> None:
-        if not self.platform_url or not self.state.platform_session_id or not text.strip():
+    async def _platform_transcript(self, call: CallSession, role: str, text: str) -> None:
+        if not self.platform_url or not call.state.platform_session_id or not text.strip():
             return
         try:
             assert self.http is not None
             await self.http.post(
                 f"{self.platform_url}/internal/calls/transcript",
                 json={
-                    "session_id": self.state.platform_session_id,
+                    "session_id": call.state.platform_session_id,
                     "role": role,
                     "text": text,
                 },
@@ -1222,45 +1259,45 @@ class GeminiLiveBridge:
         except Exception:
             logger.warning("Failed to post transcript to platform", exc_info=True)
 
-    def _buffer_transcript(self, role: str, text: str) -> None:
+    def _buffer_transcript(self, call: CallSession, role: str, text: str) -> None:
         if not text or not text.strip():
             return
         if role == "user":
-            self.state.user_tx_parts.append(text)
+            call.state.user_tx_parts.append(text)
         else:
-            self.state.model_tx_parts.append(text)
+            call.state.model_tx_parts.append(text)
 
-    async def _flush_transcript_role(self, role: str) -> None:
-        parts = self.state.user_tx_parts if role == "user" else self.state.model_tx_parts
+    async def _flush_transcript_role(self, call: CallSession, role: str) -> None:
+        parts = call.state.user_tx_parts if role == "user" else call.state.model_tx_parts
         merged = _join_transcript_fragments(parts)
         if role == "user":
-            self.state.user_tx_parts = []
+            call.state.user_tx_parts = []
         else:
-            self.state.model_tx_parts = []
+            call.state.model_tx_parts = []
         if merged:
-            await self._platform_transcript(role, merged)
+            await self._platform_transcript(call, role, merged)
 
-    async def _flush_all_transcripts(self) -> None:
-        await self._flush_transcript_role("user")
-        await self._flush_transcript_role("model")
+    async def _flush_all_transcripts(self, call: CallSession) -> None:
+        await self._flush_transcript_role(call, "user")
+        await self._flush_transcript_role(call, "model")
 
-    async def _on_turn_complete(self) -> None:
+    async def _on_turn_complete(self, call: CallSession) -> None:
         """Flush buffered transcriptions at each turn boundary."""
-        await self._flush_transcript_role("user")
-        await self._flush_transcript_role("model")
+        await self._flush_transcript_role(call, "user")
+        await self._flush_transcript_role(call, "model")
 
     async def _platform_tool(
-        self, tool_name: str, call_id: str, params: dict
+        self, call: CallSession, tool_name: str, call_id: str, params: dict
     ) -> dict:
-        if not self.platform_url or not self.state.platform_session_id:
+        if not self.platform_url or not call.state.platform_session_id:
             return {"id": call_id, "name": tool_name, "response": {"error": "no platform session"}}
         try:
             assert self.http is not None
             resp = await self.http.post(
                 f"{self.platform_url}/internal/calls/tool",
                 json={
-                    "session_id": self.state.platform_session_id,
-                    "agent_id": self.state.agent_config.get("agent_id"),
+                    "session_id": call.state.platform_session_id,
+                    "agent_id": call.state.agent_config.get("agent_id"),
                     "call_id": call_id,
                     "tool_name": tool_name,
                     "params": params,
@@ -1274,27 +1311,27 @@ class GeminiLiveBridge:
             logger.exception("Platform tool %s failed", tool_name)
             return {"id": call_id, "name": tool_name, "response": {"error": str(exc)}}
 
-    async def _platform_call_end(self) -> None:
-        if not self.platform_url or not self.state.platform_session_id:
+    async def _platform_call_end(self, call: CallSession) -> None:
+        if not self.platform_url or not call.state.platform_session_id:
             return
         duration = None
-        if self.state.call_started_at:
-            duration = time.monotonic() - self.state.call_started_at
+        if call.state.call_started_at:
+            duration = time.monotonic() - call.state.call_started_at
         try:
             assert self.http is not None
             await self.http.post(
                 f"{self.platform_url}/internal/calls/end",
                 json={
-                    "session_id": self.state.platform_session_id,
-                    "channel_id": self.state.human_channel_id,
+                    "session_id": call.state.platform_session_id,
+                    "channel_id": call.state.human_channel_id,
                     "duration_sec": duration,
                     "stats": {
-                        "rtp_in": self.state.rtp_in_frames,
-                        "rtp_out": self.state.rtp_out_frames,
-                        "gemini_turns": self.state.gemini_turn_completes,
-                        "interruptions": self.state.gemini_interruptions,
+                        "rtp_in": call.state.rtp_in_frames,
+                        "rtp_out": call.state.rtp_out_frames,
+                        "gemini_turns": call.state.gemini_turn_completes,
+                        "interruptions": call.state.gemini_interruptions,
                     },
-                    "token_usage": self.state.token_usage.to_dict(),
+                    "token_usage": call.state.token_usage.to_dict(),
                 },
                 headers=self._platform_headers(),
                 timeout=5.0,
@@ -1338,11 +1375,11 @@ class GeminiLiveBridge:
 
     # --------------------------------------------------------------- Gemini
 
-    async def _send_auto_greeting(self, session) -> None:
+    async def _send_auto_greeting(self, call: CallSession, session) -> None:
         """Kick the model to speak first. Only marks greeting_sent after success."""
-        if not AUTO_GREETING or self.state.greeting_sent:
+        if not AUTO_GREETING or call.state.greeting_sent:
             return
-        self.state.token_usage.add_text_context(AUTO_GREETING)
+        call.state.token_usage.add_text_context(AUTO_GREETING)
         await session.send_client_content(
             turns=types.Content(
                 role="user",
@@ -1350,18 +1387,18 @@ class GeminiLiveBridge:
             ),
             turn_complete=True,
         )
-        self.state.greeting_sent = True
+        call.state.greeting_sent = True
         logger.info("AUTO_GREETING sent")
 
-    async def _gemini_loop(self) -> None:
-        cfg = self.state.agent_config or {}
+    async def _gemini_loop(self, call: CallSession) -> None:
+        cfg = call.state.agent_config or {}
         model = cfg.get("model") or self.gemini_model
         config = self._build_live_config(cfg)
 
         # Per-call session loop. We reconnect on transient errors (network
         # blips, 1011 keepalive timeouts) but exit cleanly when the call
         # ends, so a fresh WebSocket is opened for the next call.
-        while self._call_active.is_set() and not self._stopping.is_set():
+        while call.call_active.is_set() and not self._stopping.is_set():
             try:
                 logger.info(
                     "Connecting to Gemini Live model: %s (agent=%s)",
@@ -1372,25 +1409,25 @@ class GeminiLiveBridge:
                     model=model,
                     config=config,
                 ) as session:
-                    self.session = session
-                    self.session_ready.set()
+                    call.session = session
+                    call.session_ready.set()
                     logger.info(
                         "Gemini Live connected (voice=%s)",
                         cfg.get("voice", self.gemini_voice),
                     )
 
                     try:
-                        await self._send_auto_greeting(session)
+                        await self._send_auto_greeting(call, session)
                     except Exception:
                         logger.exception(
                             "AUTO_GREETING failed; will retry after reconnect"
                         )
 
                     send_task = asyncio.create_task(
-                        self._gemini_send_loop(session), name="gemini-send-loop"
+                        self._gemini_send_loop(call, session), name="gemini-send-loop"
                     )
                     recv_task = asyncio.create_task(
-                        self._gemini_recv_loop(session), name="gemini-recv-loop"
+                        self._gemini_recv_loop(call, session), name="gemini-recv-loop"
                     )
 
                     try:
@@ -1412,13 +1449,13 @@ class GeminiLiveBridge:
                             if exc:
                                 raise exc
                     finally:
-                        self.session_ready.clear()
-                        self.session = None
+                        call.session_ready.clear()
+                        call.session = None
 
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                if not self._call_active.is_set():
+                if not call.call_active.is_set():
                     break
                 logger.warning(
                     "Gemini loop error: %s; reconnecting in 2s", exc
@@ -1427,13 +1464,13 @@ class GeminiLiveBridge:
 
         logger.info("Gemini per-call session loop exited")
 
-    async def _gemini_send_loop(self, session) -> None:
+    async def _gemini_send_loop(self, call: CallSession, session) -> None:
         # Same shape as React: stream 256 ms PCM16 chunks continuously.
-        self.state.last_user_tx_ts = time.monotonic()
+        call.state.last_user_tx_ts = time.monotonic()
         while not self._stopping.is_set():
             try:
                 audio_chunk = await asyncio.wait_for(
-                    self.audio_ingest_queue.get(), timeout=0.01
+                    call.audio_ingest_queue.get(), timeout=0.01
                 )
             except asyncio.TimeoutError:
                 continue
@@ -1453,10 +1490,10 @@ class GeminiLiveBridge:
                 logger.exception("Gemini send_realtime_input failed")
                 raise
             chunk_len = len(audio_chunk)
-            self.state.gemini_in_chunks += 1
-            self.state.gemini_in_bytes += chunk_len
-            self.state.token_usage.add_audio_input(chunk_len, sample_rate_hz=16000)
-            self.state.last_user_tx_ts = time.monotonic()
+            call.state.gemini_in_chunks += 1
+            call.state.gemini_in_bytes += chunk_len
+            call.state.token_usage.add_audio_input(chunk_len, sample_rate_hz=16000)
+            call.state.last_user_tx_ts = time.monotonic()
 
     @staticmethod
     def _is_gemini_session_closed(exc: BaseException) -> bool:
@@ -1465,20 +1502,20 @@ class GeminiLiveBridge:
             return True
         return "1000" in str(exc)
 
-    async def _gemini_recv_loop(self, session) -> None:
+    async def _gemini_recv_loop(self, call: CallSession, session) -> None:
         # session.receive() yields ONE model turn then returns (it breaks on
         # turn_complete). Google's cookbook re-enters receive() in a while
         # loop for every subsequent turn — without that, turn 2+ is deaf.
         try:
             while not self._stopping.is_set():
                 async for response in session.receive():
-                    self.state.token_usage.merge_api_usage(
+                    call.state.token_usage.merge_api_usage(
                         extract_usage_metadata(response)
                     )
 
                     tool_call = getattr(response, "tool_call", None)
                     if tool_call is not None:
-                        await self._handle_tool_call(session, tool_call)
+                        await self._handle_tool_call(call, session, tool_call)
 
                     server_content = getattr(response, "server_content", None)
                     if server_content is None:
@@ -1486,38 +1523,38 @@ class GeminiLiveBridge:
 
                     # React reference: only handle interruption (clear playback).
                     if getattr(server_content, "interrupted", False):
-                        self.state.gemini_interruptions += 1
+                        call.state.gemini_interruptions += 1
                         logger.info(
                             "Gemini interrupted (#%d); flushing playback queue",
-                            self.state.gemini_interruptions,
+                            call.state.gemini_interruptions,
                         )
-                        self._drain_queue(self.rtp_out_queue)
-                        self.state.out_pcm8_buffer = b""
-                        self.state.rx_resampler.reset()
+                        self._drain_queue(call.rtp_out_queue)
+                        call.state.out_pcm8_buffer = b""
+                        call.state.rx_resampler.reset()
 
                     in_tx = getattr(server_content, "input_transcription", None)
                     if in_tx is not None:
                         text = getattr(in_tx, "text", None)
                         if text:
                             logger.info("USER: %s", text)
-                            self._buffer_transcript("user", text)
-                            self.state.token_usage.add_text_output(text)
+                            self._buffer_transcript(call, "user", text)
+                            call.state.token_usage.add_text_output(text)
 
                     out_tx = getattr(server_content, "output_transcription", None)
                     if out_tx is not None:
                         text = getattr(out_tx, "text", None)
                         if text:
                             logger.info("GEMINI: %s", text)
-                            self._buffer_transcript("model", text)
-                            self.state.token_usage.add_text_output(text)
+                            self._buffer_transcript(call, "model", text)
+                            call.state.token_usage.add_text_output(text)
 
                     if getattr(server_content, "turn_complete", False):
-                        self.state.gemini_turn_completes += 1
+                        call.state.gemini_turn_completes += 1
                         logger.info(
                             "Gemini turn_complete (#%d) — ready for next turn",
-                            self.state.gemini_turn_completes,
+                            call.state.gemini_turn_completes,
                         )
-                        asyncio.create_task(self._on_turn_complete())
+                        asyncio.create_task(self._on_turn_complete(call))
 
                     model_turn = getattr(server_content, "model_turn", None)
                     if model_turn is None:
@@ -1533,10 +1570,10 @@ class GeminiLiveBridge:
                         if isinstance(audio_bytes, str):
                             audio_bytes = audio_bytes.encode()
                         ab = bytes(audio_bytes)
-                        self.state.gemini_out_bytes += len(ab)
-                        self.state.token_usage.add_audio_output(len(ab), sample_rate_hz=24000)
-                        self.state.last_gemini_audio_ts = time.monotonic()
-                        self._enqueue_output_audio(ab)
+                        call.state.gemini_out_bytes += len(ab)
+                        call.state.token_usage.add_audio_output(len(ab), sample_rate_hz=24000)
+                        call.state.last_gemini_audio_ts = time.monotonic()
+                        self._enqueue_output_audio(call, ab)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -1544,10 +1581,10 @@ class GeminiLiveBridge:
                 return
             raise
 
-    async def _handle_tool_call(self, session, tool_call) -> None:
+    async def _handle_tool_call(self, call: CallSession, session, tool_call) -> None:
         async def run_one(fc):
             params = dict(fc.args) if fc.args else {}
-            result = await self._platform_tool(fc.name, fc.id, params)
+            result = await self._platform_tool(call, fc.name, fc.id, params)
             return types.FunctionResponse(
                 id=result.get("id", fc.id),
                 name=result.get("name", fc.name),
@@ -1562,13 +1599,13 @@ class GeminiLiveBridge:
                 payload = json.dumps(fr.response) if fr.response is not None else ""
             except (TypeError, ValueError):
                 payload = str(fr.response)
-            self.state.token_usage.add_text_context(payload)
+            call.state.token_usage.add_text_context(payload)
         logger.info("Tool call batch: %s", [r.name for r in responses])
         await session.send_tool_response(function_responses=list(responses))
 
     # ----------------------------------------------------------------- RTP
 
-    def _enqueue_output_audio(self, pcm24: bytes) -> None:
+    def _enqueue_output_audio(self, call: CallSession, pcm24: bytes) -> None:
         """Convert Gemini's 24 kHz PCM16 chunk into 20 ms ulaw RTP payloads
         and enqueue them for the paced sender. Pacing is done elsewhere.
 
@@ -1576,40 +1613,40 @@ class GeminiLiveBridge:
         far-end buffer so the echo canceller knows what the caller will
         be hearing.
         """
-        if self.state.asterisk_rtp_addr is None:
+        if call.state.asterisk_rtp_addr is None:
             return
 
         # 24 kHz -> 8 kHz for Asterisk (zero-phase polyphase sinc).
         # Stateful: filter ringing at chunk boundaries is absorbed by the
         # Resampler so the spliced audio sounds continuous.
-        pcm8 = _resample_pcm16(pcm24, self.state.rx_resampler, ratio=1.0 / 3.0)
-        self.state.out_pcm8_buffer += pcm8
+        pcm8 = _resample_pcm16(pcm24, call.state.rx_resampler, ratio=1.0 / 3.0)
+        call.state.out_pcm8_buffer += pcm8
 
         # 24 kHz -> 16 kHz for the APM far-end reference. Independent
         # resampler so its filter state doesn't fight with the 8 kHz one.
-        if self.state.apm is not None:
+        if call.state.apm is not None:
             pcm16_ref = _resample_pcm16(
-                pcm24, self.state.far_resampler, ratio=2.0 / 3.0
+                pcm24, call.state.far_resampler, ratio=2.0 / 3.0
             )
-            self.state.far_end_buf += pcm16_ref
+            call.state.far_end_buf += pcm16_ref
             # Cap the far-end buffer at ~2 s so a slow inbound (or a
             # cleanup race) can't grow it unboundedly. AEC only needs
             # ~stream_delay_ms of history aligned with the near-end.
             max_bytes = 16000 * 2 * 2  # 2 s
-            if len(self.state.far_end_buf) > max_bytes:
-                self.state.far_end_buf = self.state.far_end_buf[-max_bytes:]
+            if len(call.state.far_end_buf) > max_bytes:
+                call.state.far_end_buf = call.state.far_end_buf[-max_bytes:]
 
-        while len(self.state.out_pcm8_buffer) >= FRAME_BYTES_PCM16_8K:
-            frame_pcm16 = self.state.out_pcm8_buffer[:FRAME_BYTES_PCM16_8K]
-            self.state.out_pcm8_buffer = self.state.out_pcm8_buffer[FRAME_BYTES_PCM16_8K:]
+        while len(call.state.out_pcm8_buffer) >= FRAME_BYTES_PCM16_8K:
+            frame_pcm16 = call.state.out_pcm8_buffer[:FRAME_BYTES_PCM16_8K]
+            call.state.out_pcm8_buffer = call.state.out_pcm8_buffer[FRAME_BYTES_PCM16_8K:]
             ulaw_payload = audioop.lin2ulaw(frame_pcm16, 2)
             try:
-                self.rtp_out_queue.put_nowait(ulaw_payload)
+                call.rtp_out_queue.put_nowait(ulaw_payload)
             except asyncio.QueueFull:
                 logger.warning("RTP out queue full; dropping outbound frame")
                 return
 
-    async def _rtp_pacer_loop(self) -> None:
+    async def _rtp_pacer_loop(self, call: CallSession) -> None:
         """Send one ulaw RTP packet every 20 ms when audio is queued.
 
         Asterisk's jitter buffer expects ptime-paced RTP. Without this the
@@ -1620,40 +1657,40 @@ class GeminiLiveBridge:
         while not self._stopping.is_set():
             try:
                 ulaw_payload = await asyncio.wait_for(
-                    self.rtp_out_queue.get(), timeout=1.0
+                    call.rtp_out_queue.get(), timeout=1.0
                 )
             except asyncio.TimeoutError:
                 next_send = time.monotonic()
                 continue
 
             if (
-                self.rtp_transport is None
-                or self.state.asterisk_rtp_addr is None
+                call.rtp_transport is None
+                or call.state.asterisk_rtp_addr is None
             ):
                 # Lost the call; drop the frame.
                 continue
 
             packet = build_rtp_packet(
                 payload=ulaw_payload,
-                sequence_number=self.state.tx_seq,
-                timestamp=self.state.tx_timestamp,
-                ssrc=self.state.tx_ssrc,
+                sequence_number=call.state.tx_seq,
+                timestamp=call.state.tx_timestamp,
+                ssrc=call.state.tx_ssrc,
                 payload_type=0,  # PCMU
             )
 
             try:
-                self._send_rtp(packet, self.state.asterisk_rtp_addr)
+                self._send_rtp_for_call(call, packet, call.state.asterisk_rtp_addr)
             except Exception:
                 logger.exception("Failed to send RTP packet")
                 continue
 
-            self.state.rtp_out_frames += 1
+            call.state.rtp_out_frames += 1
             # Record outbound timestamp for TTS gating. Inbound audio
             # arriving within GATE_TAIL_MS of this is treated as likely
             # acoustic echo of our own output.
-            self.state.last_outbound_rtp_ts = time.monotonic()
-            self.state.tx_seq = (self.state.tx_seq + 1) & 0xFFFF
-            self.state.tx_timestamp = (self.state.tx_timestamp + SAMPLES_PER_FRAME_8K) & 0xFFFFFFFF
+            call.state.last_outbound_rtp_ts = time.monotonic()
+            call.state.tx_seq = (call.state.tx_seq + 1) & 0xFFFF
+            call.state.tx_timestamp = (call.state.tx_timestamp + SAMPLES_PER_FRAME_8K) & 0xFFFFFFFF
 
             # Wall-clock pace: sleep until next_send. If we fell behind,
             # reset the schedule so we don't burst-catch-up.
@@ -1665,7 +1702,7 @@ class GeminiLiveBridge:
             elif delay > 0:
                 await asyncio.sleep(delay)
 
-    async def handle_rtp_packet(self, data: bytes, addr: tuple[str, int]) -> None:
+    async def handle_rtp_packet(self, call: CallSession, data: bytes, addr: tuple[str, int]) -> None:
         try:
             payload_type, _seq, _ts, payload = parse_rtp(data)
         except Exception as exc:
@@ -1680,23 +1717,23 @@ class GeminiLiveBridge:
         # can leak stray packets from the previous call's ExternalMedia
         # channel after we delete it; learning that address would taint
         # the next call's outbound path.
-        if not self.state.active or self.state.external_channel_id is None:
+        if not call.state.active or call.state.external_channel_id is None:
             return
 
-        if self.state.asterisk_rtp_addr is None:
+        if call.state.asterisk_rtp_addr is None:
             rip = addr[0]
             if rip in ("127.0.0.1", "::1", "localhost") and self._asterisk_rtp_host_ip:
                 rip = self._asterisk_rtp_host_ip
-            self.state.asterisk_rtp_addr = (rip, addr[1])
-            logger.info("Learned Asterisk RTP remote address: %s", self.state.asterisk_rtp_addr)
+            call.state.asterisk_rtp_addr = (rip, addr[1])
+            logger.info("Learned Asterisk RTP remote address: %s", call.state.asterisk_rtp_addr)
 
-        if self.state.rtp_in_frames == 0:
+        if call.state.rtp_in_frames == 0:
             logger.info(
                 "First RTP from Asterisk: %d bytes from %s (pcmu)",
                 len(payload),
                 addr,
             )
-        self.state.rtp_in_frames += 1
+        call.state.rtp_in_frames += 1
 
         # PCMU -> PCM16 8 kHz -> PCM16 16 kHz for Gemini.
         # libsamplerate (sinc_fastest) gives Gemini a clean upsampled
@@ -1704,7 +1741,7 @@ class GeminiLiveBridge:
         # on telephony audio (see GoogleCloudPlatform/generative-ai
         # gemini-live-telephony-app reference).
         pcm8 = audioop.ulaw2lin(payload, 2)
-        pcm16k = _resample_pcm16(pcm8, self.state.tx_resampler, ratio=2.0)
+        pcm16k = _resample_pcm16(pcm8, call.state.tx_resampler, ratio=2.0)
         # Small static lift so the APM's AGC has signal to work with.
         # AGC will then dynamically normalise from here. audioop.mul
         # saturates at int16 bounds, so brief peaks just clip instead
@@ -1714,10 +1751,10 @@ class GeminiLiveBridge:
 
         try:
             frame_rms = audioop.rms(pcm16k, 2)
-            if frame_rms > self.state.in_rms_peak:
-                self.state.in_rms_peak = frame_rms
-            self.state.in_rms_sum += frame_rms
-            self.state.in_rms_count += 1
+            if frame_rms > call.state.in_rms_peak:
+                call.state.in_rms_peak = frame_rms
+            call.state.in_rms_sum += frame_rms
+            call.state.in_rms_count += 1
         except audioop.error:
             frame_rms = 0
 
@@ -1726,32 +1763,32 @@ class GeminiLiveBridge:
         # (Asterisk mis-bridge or softphone muted from the start). If
         # they're nonzero but go to 0 only after the AI speaks, the
         # softphone is auto-muting on speaker output (use headphones).
-        if self.state.rtp_in_frames <= 5:
+        if call.state.rtp_in_frames <= 5:
             logger.info(
                 "RTP early frame #%d: frame_rms=%d (raw 8k bytes=%d)",
-                self.state.rtp_in_frames,
+                call.state.rtp_in_frames,
                 frame_rms,
                 len(payload),
             )
 
-        if not self.session_ready.is_set():
+        if not call.session_ready.is_set():
             return
 
         now = time.monotonic()
 
-        self.state.in_pcm16k_buffer += pcm16k
+        call.state.in_pcm16k_buffer += pcm16k
 
         # Optional APM stage (off by default). Only runs if a working
         # AudioProcessor was constructed at session start.
-        if self.state.apm is not None:
-            while len(self.state.in_pcm16k_buffer) >= APM_FRAME_BYTES_16K:
-                near = self.state.in_pcm16k_buffer[:APM_FRAME_BYTES_16K]
-                self.state.in_pcm16k_buffer = self.state.in_pcm16k_buffer[
+        if call.state.apm is not None:
+            while len(call.state.in_pcm16k_buffer) >= APM_FRAME_BYTES_16K:
+                near = call.state.in_pcm16k_buffer[:APM_FRAME_BYTES_16K]
+                call.state.in_pcm16k_buffer = call.state.in_pcm16k_buffer[
                     APM_FRAME_BYTES_16K:
                 ]
-                if len(self.state.far_end_buf) >= APM_FRAME_BYTES_16K:
-                    far = self.state.far_end_buf[:APM_FRAME_BYTES_16K]
-                    self.state.far_end_buf = self.state.far_end_buf[
+                if len(call.state.far_end_buf) >= APM_FRAME_BYTES_16K:
+                    far = call.state.far_end_buf[:APM_FRAME_BYTES_16K]
+                    call.state.far_end_buf = call.state.far_end_buf[
                         APM_FRAME_BYTES_16K:
                     ]
                 else:
@@ -1759,44 +1796,45 @@ class GeminiLiveBridge:
                 try:
                     near_np = np.frombuffer(near, dtype=np.int16)
                     far_np = np.frombuffer(far, dtype=np.int16)
-                    out_np = self.state.apm.process(near_np, far_np)
+                    out_np = call.state.apm.process(near_np, far_np)
                     processed = out_np.tobytes()
-                    self.state.apm_frames += 1
+                    call.state.apm_frames += 1
                     try:
                         rms = int(audioop.rms(processed, 2))
-                        if rms > self.state.apm_rms_peak:
-                            self.state.apm_rms_peak = rms
-                        self.state.apm_rms_sum += rms
-                        self.state.apm_rms_count += 1
+                        if rms > call.state.apm_rms_peak:
+                            call.state.apm_rms_peak = rms
+                        call.state.apm_rms_sum += rms
+                        call.state.apm_rms_count += 1
                     except audioop.error:
                         pass
                 except Exception:
                     processed = near
-                self.state.in_pcm16k_clean_buffer += processed
+                call.state.in_pcm16k_clean_buffer += processed
         else:
             # No APM: pass the raw 16 kHz buffer through unchanged.
-            self.state.in_pcm16k_clean_buffer += self.state.in_pcm16k_buffer
-            self.state.in_pcm16k_buffer = b""
+            call.state.in_pcm16k_clean_buffer += call.state.in_pcm16k_buffer
+            call.state.in_pcm16k_buffer = b""
 
         # Re-frame to GEMINI_CHUNK_BYTES and enqueue for the send loop.
-        while len(self.state.in_pcm16k_clean_buffer) >= GEMINI_CHUNK_BYTES:
-            chunk = self.state.in_pcm16k_clean_buffer[:GEMINI_CHUNK_BYTES]
-            self.state.in_pcm16k_clean_buffer = self.state.in_pcm16k_clean_buffer[
+        while len(call.state.in_pcm16k_clean_buffer) >= GEMINI_CHUNK_BYTES:
+            chunk = call.state.in_pcm16k_clean_buffer[:GEMINI_CHUNK_BYTES]
+            call.state.in_pcm16k_clean_buffer = call.state.in_pcm16k_clean_buffer[
                 GEMINI_CHUNK_BYTES:
             ]
             try:
-                self.audio_ingest_queue.put_nowait(chunk)
+                call.audio_ingest_queue.put_nowait(chunk)
             except asyncio.QueueFull:
                 logger.warning("Inbound audio queue full; dropping chunk")
                 break
 
 
 class RTPProtocol(asyncio.DatagramProtocol):
-    def __init__(self, bridge: GeminiLiveBridge) -> None:
+    def __init__(self, bridge: GeminiLiveBridge, call: CallSession) -> None:
         self.bridge = bridge
+        self.call = call
 
     def datagram_received(self, data: bytes, addr) -> None:
-        asyncio.create_task(self.bridge.handle_rtp_packet(data, addr))
+        asyncio.create_task(self.bridge.handle_rtp_packet(self.call, data, addr))
 
 
 bridge = GeminiLiveBridge()
@@ -1842,34 +1880,66 @@ async def internal_originate(
 
 @app.get("/health")
 async def health():
+    active_calls = list(bridge._calls.values())
+    first_call = active_calls[0] if active_calls else None
+    first_state = first_call.state if first_call else None
     return {
         "ok": True,
-        "session_ready": bridge.session_ready.is_set(),
-        "bridge_active": bridge.state.active,
-        "bridge_id": bridge.state.bridge_id,
-        "human_channel_id": bridge.state.human_channel_id,
-        "external_channel_id": bridge.state.external_channel_id,
+        "active_calls": len(active_calls),
+        "calls": [
+            {
+                "channel_id": call.human_channel_id,
+                "rtp_port": call.rtp_port,
+                "session_ready": call.session_ready.is_set(),
+            }
+            for call in active_calls
+        ],
+        "session_ready": first_call.session_ready.is_set() if first_call else False,
+        "bridge_active": bool(active_calls),
+        "bridge_id": first_state.bridge_id if first_state else None,
+        "human_channel_id": first_state.human_channel_id if first_state else None,
+        "external_channel_id": first_state.external_channel_id if first_state else None,
         "asterisk_rtp_addr": (
-            list(bridge.state.asterisk_rtp_addr)
-            if bridge.state.asterisk_rtp_addr
+            list(first_state.asterisk_rtp_addr)
+            if first_state and first_state.asterisk_rtp_addr
             else None
         ),
         "model": (
-            bridge.state.agent_config.get("model")
-            if bridge.state.agent_config
+            first_state.agent_config.get("model")
+            if first_state and first_state.agent_config
             else bridge.gemini_model
         ),
         "voice": (
-            bridge.state.agent_config.get("voice")
-            if bridge.state.agent_config
+            first_state.agent_config.get("voice")
+            if first_state and first_state.agent_config
             else bridge.gemini_voice
         ),
-        "platform_session_id": bridge.state.platform_session_id,
+        "platform_session_id": first_state.platform_session_id if first_state else None,
         "platform_url": bridge.platform_url or None,
-        "rtp_port": bridge.rtp_port,
+        "rtp_port_base": bridge.rtp_port_base,
+        "rtp_port_count": bridge.rtp_port_count,
         "inbound_gain": INBOUND_GAIN,
         "tts_gating": TTS_GATING_ENABLED,
         "tts_gate_tail_ms": GATE_TAIL_MS,
-        "rtp_out_queue_depth": bridge.rtp_out_queue.qsize(),
-        "audio_ingest_queue_depth": bridge.audio_ingest_queue.qsize(),
+        "max_concurrent_calls": bridge.max_concurrent_calls,
+        "free_ports": len(bridge._free_ports),
+    }
+
+
+@app.get("/internal/status")
+async def internal_status(_: None = Depends(_verify_bridge_token)):
+    return {
+        "active_calls": len(bridge._calls),
+        "max_concurrent": bridge.max_concurrent_calls,
+        "free_ports": len(bridge._free_ports),
+        "calls": [
+            {
+                "channel_id": call.human_channel_id,
+                "rtp_port": call.rtp_port,
+                "session_ready": call.session_ready.is_set(),
+                "bridge_id": call.state.bridge_id,
+                "external_channel_id": call.state.external_channel_id,
+            }
+            for call in bridge._calls.values()
+        ],
     }

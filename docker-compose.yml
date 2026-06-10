@@ -158,6 +158,9 @@ services:
       - .env
     environment:
       PLATFORM_URL: http://platform:8000
+      MAX_CONCURRENT_CALLS: ${MAX_CONCURRENT_CALLS:-5}
+      RTP_PORT_BASE: ${RTP_PORT_BASE:-40000}
+      RTP_PORT_COUNT: ${RTP_PORT_COUNT:-50}
     depends_on:
       asterisk:
         condition: service_healthy

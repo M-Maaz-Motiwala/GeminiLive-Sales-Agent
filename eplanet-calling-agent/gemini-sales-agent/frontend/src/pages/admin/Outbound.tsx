@@ -5,8 +5,10 @@ import { PhoneOutgoing, Radio, AlertCircle, Wifi, RefreshCw } from 'lucide-react
 import { API_BASE, apiFetchList, apiFetchPublic } from '@/src/lib/api';
 import {
   DEFAULT_LAB_ENDPOINT,
+  dialBatch,
   dialOutbound,
   fetchOutboundAgents,
+  fetchOutboundStatus,
   type OutboundAgent,
 } from '@/src/lib/outbound';
 import { PageHeader, GlassCard, BtnPrimary, Badge } from '@/src/components/admin/theme';
@@ -25,17 +27,20 @@ export default function Outbound() {
   const [error, setError] = useState('');
   const [dialing, setDialing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [bridgeInfo, setBridgeInfo] = useState<{ active_calls?: number; max_concurrent?: number }>({});
 
   const load = async () => {
     if (!token) return;
     setLoading(true);
     try {
-      const [agentList, leadList, sessionList, sysInfo] = await Promise.all([
+      const [agentList, leadList, sessionList, sysInfo, obStatus] = await Promise.all([
         fetchOutboundAgents(token),
         apiFetchList('/api/leads', token),
         apiFetchList('/api/sessions?limit=20', token),
         apiFetchPublic('/api/system/info'),
+        fetchOutboundStatus(token).catch(() => ({})),
       ]);
+      setBridgeInfo(obStatus?.bridge || {});
       setAgents(agentList);
       setLeads(leadList);
       setSessions(
@@ -210,13 +215,45 @@ export default function Outbound() {
                   </p>
                 </label>
 
-                <BtnPrimary
-                  onClick={dial}
-                  disabled={dialing || !agentId}
-                  className="w-full sm:w-auto bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500"
-                >
-                  {dialing ? 'Originating…' : 'Dial now'}
-                </BtnPrimary>
+                <div className="flex flex-wrap gap-2">
+                  <BtnPrimary
+                    onClick={dial}
+                    disabled={dialing || !agentId}
+                    className="bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500"
+                  >
+                    {dialing ? 'Originating…' : 'Dial now'}
+                  </BtnPrimary>
+                  <BtnPrimary
+                    onClick={async () => {
+                      if (!agentId) return;
+                      setDialing(true);
+                      setError('');
+                      try {
+                        const res = await dialBatch(token, {
+                          agent_id: Number(agentId),
+                          endpoints: ['PJSIP/1001', 'PJSIP/1002'],
+                        });
+                        setStatus(
+                          `Batch: ${res.dialed} ok, ${res.failed} failed — answer both phones.`,
+                        );
+                        load();
+                      } catch (e) {
+                        setError(e instanceof Error ? e.message : 'Batch failed');
+                      } finally {
+                        setDialing(false);
+                      }
+                    }}
+                    disabled={dialing || !agentId}
+                    className="bg-violet-700 hover:bg-violet-600"
+                  >
+                    Dial 1001 + 1002
+                  </BtnPrimary>
+                </div>
+                {bridgeInfo.max_concurrent != null && (
+                  <p className="text-[10px] text-zinc-600">
+                    Bridge capacity: {bridgeInfo.active_calls ?? 0} / {bridgeInfo.max_concurrent} active
+                  </p>
+                )}
               </>
             )}
 

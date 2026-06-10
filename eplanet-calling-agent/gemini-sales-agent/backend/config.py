@@ -45,9 +45,20 @@ class Settings(BaseSettings):
     bridge_internal_token: str = "change-me-bridge-token"
     bridge_url: str = "http://bridge:8000"
 
-    # Outbound lab dial (softphone on same Asterisk — no PSTN trunk yet)
+    # Outbound: lab (PJSIP/100x) | trunk (PJSIP/+E164@trunk) — trunk creds in Asterisk
+    outbound_mode: str = "lab"
     outbound_lab_endpoint: str = "PJSIP/1001"
     outbound_default_caller_id: str = "1000"
+    outbound_default_country_code: str = "1"
+    outbound_trunk_name: str = ""
+    outbound_trunk_caller_id: str = ""
+    max_concurrent_outbound: int = 5
+
+    # Call window (local timezone); disable with outbound_call_window_enabled=false
+    outbound_call_window_enabled: bool = True
+    outbound_call_timezone: str = "UTC"
+    outbound_call_hour_start: int = 9
+    outbound_call_hour_end: int = 18
 
 
 @lru_cache

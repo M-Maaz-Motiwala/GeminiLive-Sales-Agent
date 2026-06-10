@@ -169,48 +169,65 @@ Tips: use headphones; disable Zoiper echo cancellation for AI calls; dial 600 fo
 
 ---
 
-## Outbound calls (lab)
+## Outbound calls (lab + CRM)
 
-Phase 1 uses a **local softphone** as the prospect — no PSTN/SIP trunk yet. Same stack as inbound: CRM agents, KB, prompts, post-call summaries.
+**Phase 2a** — full outbound CRM on lab SIP. **Phase 2b** — flip `OUTBOUND_MODE=trunk` when SIP provider + DID arrive (no CRM rewrite).
 
 ### Flow
 
 ```
-Admin → Outbound Calls → Dial
-    → POST /api/outbound/dial
-    → gemini_bridge POST /internal/originate
-    → Asterisk rings PJSIP/1001 (lab prospect)
-    → Stasis → Gemini Live (Riley, cold-outbound)
+Admin → Outbound / Campaigns
+    → POST /api/outbound/dial (or /dial/batch, /campaigns/{id}/dial)
+    → gemini_bridge (multi-call, per-call RTP port)
+    → Asterisk → PJSIP/1001, 1002, …
+    → Stasis → Gemini Live (Riley)
 ```
 
-### Lab setup
+### Lab setup (single or dual phone)
 
-1. Register **two** softphones on the same Asterisk (same `EXTERNAL_IP`):
-   - **1000** — you (inbound testing)
-   - **1001** — simulates the prospect (`SIP_USER_1001` / `SIP_PASS_1001` in `.env`)
-2. Admin → **Outbound Calls** → agent **Riley — Cold Outbound** → **Dial now**
-3. Answer on the **1001** softphone — Riley introduces Trangotech and tries to book a callback or capture a lead
-4. Optional: attach a **Lead** before dialing — CRM context is injected into the live prompt
-5. Review session transcript, `call_disposition` output, and new/updated leads
+1. Register softphones on same Wi‑Fi (`EXTERNAL_IP`):
+   - **1001** / **1002** — prospect phones (`SIP_PASS_1001`, `SIP_PASS_1002`)
+2. **Outbound Calls** → Riley → **Dial now** (one phone) or **Dial 1001 + 1002** (simultaneous)
+3. **Campaigns** → create lab campaign with `PJSIP/1001` + `PJSIP/1002` → **Dial all**
+4. Optional: **Leads** → **Call** (CRM context + DNC / call-window checks)
+5. Review **Sessions** — OUTBOUND badge, `call_disposition`, leads
+
+### Trunk mode (when ready)
+
+```env
+OUTBOUND_MODE=trunk
+OUTBOUND_TRUNK_NAME=your_trunk   # Asterisk PJSIP trunk name
+OUTBOUND_TRUNK_CALLER_ID=+15551234567
+```
+
+Configure trunk peer in `asterisk/pjsip.conf` — leads dial as `PJSIP/+E164@your_trunk`.
 
 ### Env vars
 
 | Variable | Default | Purpose |
 | -------- | ------- | ------- |
-| `BRIDGE_URL` | `http://bridge:8000` | Platform → bridge HTTP (Docker network) |
-| `OUTBOUND_LAB_ENDPOINT` | `PJSIP/1001` | Default ARI endpoint when no lead phone |
-| `OUTBOUND_DEFAULT_CALLER_ID` | `1000` | Caller ID presented to callee |
+| `OUTBOUND_MODE` | `lab` | `lab` or `trunk` |
+| `BRIDGE_URL` | `http://bridge:8000` | Platform → bridge |
+| `OUTBOUND_LAB_ENDPOINT` | `PJSIP/1001` | Default lab target |
+| `MAX_CONCURRENT_CALLS` | `5` | Bridge simultaneous calls |
+| `RTP_PORT_BASE` / `COUNT` | `40000` / `50` | Per-call RTP ports |
+| `OUTBOUND_CALL_*` | 9–18 UTC | Call window; disable with `OUTBOUND_CALL_WINDOW_ENABLED=false` |
 
 ### API
 
 ```bash
+# Single dial
 curl -X POST http://localhost:8000/api/outbound/dial \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"agent_id": 4, "lead_id": 1, "endpoint": "PJSIP/1001"}'
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"agent_id": 4, "endpoint": "PJSIP/1001"}'
+
+# Batch (two phones)
+curl -X POST http://localhost:8000/api/outbound/dial/batch \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"agent_id": 4, "endpoints": ["PJSIP/1001", "PJSIP/1002"]}'
 ```
 
-PSTN trunk, campaigns, AMD, and multi-concurrent outbound are **Phase 2+**.
+AMD and large-scale dialer queues are **Phase 2c+**.
 
 ---
 
@@ -220,7 +237,8 @@ PSTN trunk, campaigns, AMD, and multi-concurrent outbound are **Phase 2+**.
 | ---- | ------- |
 | Dashboard | Getting started + SIP IP |
 | Agents | Extensions, prompts, tools (inbound + outbound_sales) |
-| Outbound Calls | Lab originate to softphone 1001 |
+| Outbound Calls | Dial / batch dial (1001+1002) |
+| Campaigns | Batch campaigns, parallel lab demo |
 | Documents | Upload KB files per agent |
 | Sessions | Transcripts + auto summaries (inbound + outbound) |
 | Leads | CRM from calls and agent tools |

@@ -46,6 +46,9 @@ async def system_info() -> dict:
         "sip_codec_label": _CODEC_LABELS.get(sip_codec.upper(), sip_codec),
         "sip_user_1001": os.getenv("SIP_USER_1001", "1001"),
         "sip_pass_1001": os.getenv("SIP_PASS_1001", "1001pass"),
+        "sip_user_1002": os.getenv("SIP_USER_1002", "1002"),
+        "sip_pass_1002": os.getenv("SIP_PASS_1002", "1002pass"),
+        "outbound_mode": os.getenv("OUTBOUND_MODE", "lab"),
         "default_admin_email": os.getenv("ADMIN_EMAIL", "admin@aura.ai"),
         "outbound_lab_endpoint": os.getenv("OUTBOUND_LAB_ENDPOINT", "PJSIP/1001"),
         "test_extensions": {

@@ -54,6 +54,21 @@ class DocumentStatus(str, enum.Enum):
     failed = "failed"
 
 
+class CampaignStatus(str, enum.Enum):
+    draft = "draft"
+    running = "running"
+    paused = "paused"
+    completed = "completed"
+
+
+class CampaignLeadStatus(str, enum.Enum):
+    pending = "pending"
+    dialing = "dialing"
+    completed = "completed"
+    failed = "failed"
+    skipped = "skipped"
+
+
 class OutputType(str, enum.Enum):
     summary = "summary"
     lead_capture = "lead_capture"
@@ -163,6 +178,52 @@ class ToolCall(Base):
     session = relationship("Session", back_populates="tool_calls")
 
 
+class DoNotCall(Base):
+    __tablename__ = "dnc_list"
+
+    id = Column(Integer, primary_key=True)
+    phone_e164 = Column(String(20), unique=True, nullable=False, index=True)
+    reason = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Campaign(Base):
+    __tablename__ = "campaigns"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    agent_id = Column(Integer, ForeignKey("agents.id"), nullable=False)
+    status = Column(Enum(CampaignStatus), default=CampaignStatus.draft, nullable=False)
+    description = Column(Text, nullable=True)
+    meta = Column(JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    agent = relationship("Agent", backref="campaigns")
+    campaign_leads = relationship(
+        "CampaignLead", back_populates="campaign", cascade="all, delete-orphan"
+    )
+
+
+class CampaignLead(Base):
+    __tablename__ = "campaign_leads"
+
+    id = Column(Integer, primary_key=True)
+    campaign_id = Column(Integer, ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False)
+    lead_id = Column(Integer, ForeignKey("leads.id", ondelete="CASCADE"), nullable=True)
+    endpoint = Column(String(255), nullable=True)
+    status = Column(
+        Enum(CampaignLeadStatus), default=CampaignLeadStatus.pending, nullable=False
+    )
+    session_id = Column(Integer, ForeignKey("sessions.id"), nullable=True)
+    last_error = Column(Text, nullable=True)
+    dialed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    campaign = relationship("Campaign", back_populates="campaign_leads")
+    lead = relationship("Lead")
+
+
 class Lead(Base):
     __tablename__ = "leads"
 
@@ -170,6 +231,7 @@ class Lead(Base):
     name = Column(String(255))
     email = Column(String(255), nullable=True)
     phone = Column(String(50), nullable=True)
+    phone_e164 = Column(String(20), nullable=True, index=True)
     company = Column(String(255), nullable=True)
     status = Column(Enum(LeadStatus), default=LeadStatus.new, nullable=False)
     source_session_id = Column(Integer, ForeignKey("sessions.id"), nullable=True)

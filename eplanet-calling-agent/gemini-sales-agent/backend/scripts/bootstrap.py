@@ -9,6 +9,7 @@ from backend.config import get_settings
 from backend.scripts.create_admin import create_admin  # noqa: E402
 from backend.scripts.migrate_add_extension import migrate  # noqa: E402
 from backend.scripts.migrate_outbound import migrate as migrate_outbound  # noqa: E402
+from backend.scripts.migrate_phase2 import migrate as migrate_phase2  # noqa: E402
 from backend.scripts.seed_agents import seed_agents  # noqa: E402
 from backend.scripts.seed_rag import seed_rag  # noqa: E402
 from backend.services.rag_service import ensure_pinecone_index_async
@@ -22,6 +23,7 @@ async def main() -> None:
     print("=== Bootstrap: database migration ===")
     await migrate()
     await migrate_outbound()
+    await migrate_phase2()
 
     print("=== Bootstrap: admin user ===")
     await create_admin(email, password, full_name)

@@ -7,6 +7,9 @@ if [ -f /run/host.env ]; then
   . /run/host.env
 fi
 
+SIP_PASS_1001="${SIP_PASS_1001:-1001pass}"
+SIP_PASS_1002="${SIP_PASS_1002:-1002pass}"
+
 if [ -n "${EXTERNAL_IP}" ]; then
   PJSIP_NAT="external_media_address=${EXTERNAL_IP}
 external_signaling_address=${EXTERNAL_IP}"
@@ -27,10 +30,14 @@ awk -v pjsip="$PJSIP_NAT" -v rtp="$RTP_NAT" -v media="$MEDIA_LINE" '
   { print }
 ' /templates/pjsip.conf.template > /etc/asterisk/pjsip.conf
 
+sed -i "s|@SIP_PASS_1001@|${SIP_PASS_1001}|g; s|@SIP_PASS_1002@|${SIP_PASS_1002}|g" \
+  /etc/asterisk/pjsip.conf
+
 awk -v rtp="$RTP_NAT" '
   /@EXTERNADDR_LINE@/ { print rtp; next }
   { print }
 ' /templates/rtp.conf.template > /etc/asterisk/rtp.conf
 
 echo "asterisk-entrypoint: EXTERNAL_IP=${EXTERNAL_IP:-<unset>}"
+echo "asterisk-entrypoint: SIP extensions 1000, 1001 (${SIP_PASS_1001:+set}), 1002 (${SIP_PASS_1002:+set})"
 exec /usr/local/bin/entrypoint.sh "$@"
