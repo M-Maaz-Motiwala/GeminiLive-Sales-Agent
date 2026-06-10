@@ -1,0 +1,26 @@
+import { apiFetch, apiFetchList } from '@/src/lib/api';
+
+export type OutboundAgent = {
+  id: number;
+  name: string;
+  slug: string;
+  voice?: string;
+  inbound_extension?: string | null;
+};
+
+export async function fetchOutboundAgents(token: string | null): Promise<OutboundAgent[]> {
+  return apiFetchList('/api/outbound/agents', token);
+}
+
+export async function dialOutbound(
+  token: string | null,
+  body: { agent_id: number; lead_id?: number; endpoint?: string },
+): Promise<{ status: string; endpoint: string; bridge?: { channel_id?: string } }> {
+  return apiFetch('/api/outbound/dial', token, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/** Lab default when lead has no phone — matches OUTBOUND_LAB_ENDPOINT */
+export const DEFAULT_LAB_ENDPOINT = 'PJSIP/1001';

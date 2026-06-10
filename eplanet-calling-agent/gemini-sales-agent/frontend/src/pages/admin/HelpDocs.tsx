@@ -14,6 +14,7 @@ const NAV_SECTIONS = [
   { id: 'overview', label: 'Overview' },
   { id: 'architecture', label: 'Architecture' },
   { id: 'call-flow', label: 'Call flow' },
+  { id: 'outbound', label: 'Outbound calls' },
   { id: 'services', label: 'Docker services' },
   { id: 'master-prompt', label: 'Master prompt' },
   { id: 'agents', label: 'Agents & routing' },
@@ -163,8 +164,9 @@ export default function HelpDocs() {
               <p className="text-sm text-zinc-300 leading-relaxed">
                 <strong className="text-white">Aura Call Center</strong> connects a SIP softphone (Zoiper) to{' '}
                 <Pill color="cyan">Google Gemini Live</Pill> for real-time voice AI. Each extension (701–703) routes to a
-                different agent with its own prompt, voice, tools, and knowledge base. The admin UI manages agents, documents,
-                sessions, leads, and CRM — calls happen over SIP, not the browser.
+                different agent with its own prompt, voice, tools, and knowledge base. <strong className="text-white">Outbound</strong> cold
+                calls are placed from <Link to="/admin/outbound" className="text-orange-400 hover:underline">Outbound Calls</Link> in the CRM
+                (mobile Zoiper as ext 1001 receives the call). The admin UI manages agents, documents, sessions, leads, and CRM.
               </p>
             </GlassCard>
             <InfoGrid items={[
@@ -181,6 +183,22 @@ export default function HelpDocs() {
               Only <code className="text-violet-400">gemini_bridge</code> subscribes to Asterisk ARI app{' '}
               <code className="text-violet-400">gemini-agent</code>. The platform never handles RTP directly.
             </p>
+          </DocsSection>
+
+          <DocsSection id="outbound" title="Outbound calls (CRM)" subtitle="Dial Riley from the admin — phone receives the call">
+            <GlassCard className="p-5 space-y-3 text-sm text-zinc-300">
+              <ol className="list-decimal list-inside space-y-2 text-zinc-400">
+                <li>Register mobile Zoiper as extension <strong className="text-white">1001</strong> to your SIP server IP (Dashboard).</li>
+                <li>Admin → <Link to="/admin/outbound" className="text-orange-400 hover:underline">Outbound Calls</Link> → Riley → <strong className="text-white">Dial now</strong>.</li>
+                <li>Answer on the phone — Gemini places the cold call (AUTO_GREETING opens).</li>
+                <li>Optional: pick a <Link to="/admin/leads" className="text-violet-400 hover:underline">Lead</Link> for CRM context, or use the <strong className="text-white">Call</strong> button on a lead row.</li>
+                <li>Review <Link to="/admin/sessions" className="text-violet-400 hover:underline">Sessions</Link> for transcript and call_disposition output.</li>
+              </ol>
+              <p className="text-xs text-zinc-500 pt-2 border-t border-white/5">
+                Manage Riley like inbound agents: <Link to="/admin/agents" className="text-violet-400">Agents</Link>,{' '}
+                <Link to="/admin/documents" className="text-violet-400">Knowledge base</Link>, prompts, tools.
+              </p>
+            </GlassCard>
           </DocsSection>
 
           <DocsSection id="call-flow" title="End-to-end call flow" subtitle="From dial to summary">

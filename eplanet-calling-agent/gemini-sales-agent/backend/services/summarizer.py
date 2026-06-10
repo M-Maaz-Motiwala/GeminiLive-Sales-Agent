@@ -31,6 +31,11 @@ _SUMMARY_PROMPTS: dict[str, str] = {
         "Write 3-4 concise sentences covering: the issue or question, what was explained, "
         "whether it was resolved, and any escalation or follow-up needed."
     ),
+    AgentType.outbound_sales.value: (
+        "You are summarizing an outbound cold call. "
+        "Write 3-4 concise sentences covering: prospect reaction, interest level, "
+        "whether a callback was booked or lead captured, and recommended follow-up."
+    ),
     "default": (
         "You are a professional note-taker. Summarize the conversation into "
         "2-4 concise sentences capturing key points and outcomes."
@@ -41,6 +46,7 @@ _AGENT_OUTPUT_TYPES: dict[str, list[str]] = {
     AgentType.lead_qualification.value: ["lead_capture", "action_items"],
     AgentType.sales.value: ["action_items"],
     AgentType.document_qa.value: ["action_items"],
+    AgentType.outbound_sales.value: ["call_disposition", "lead_capture", "action_items"],
 }
 
 
@@ -140,6 +146,12 @@ async def generate_output(
         "action_items": (
             "List follow-ups from this conversation as JSON with key: "
             "items (array of {task, owner, priority, due_date}). Return ONLY valid JSON."
+        ),
+        "call_disposition": (
+            "Classify this outbound call as JSON with keys: "
+            "disposition (interested|callback_booked|not_interested|no_answer|wrong_number|do_not_call|voicemail), "
+            "interest_level (1-10), callback_requested (boolean), lead_captured (boolean), "
+            "objections (array of strings), notes (short string). Return ONLY valid JSON."
         ),
         "research_report": (
             "Compile a structured research report as JSON with keys: "

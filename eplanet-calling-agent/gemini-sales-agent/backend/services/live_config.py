@@ -28,6 +28,17 @@ Engagement during lookups (critical — no dead air):
 
 PRELOAD_QUERY = "company overview services products pricing policies support process agent role"
 
+OUTBOUND_CALL_SUPPLEMENT = """
+## Outbound call mode
+You placed this call — the prospect did not dial in.
+- Open with a brief introduction and ask if they have a moment before pitching.
+- Goal: explain Trangotech value briefly and book a callback or capture lead details (create_lead).
+- If they are not interested or ask not to be called again, thank them politely and wrap up.
+- Never be pushy; respect hang-ups and "no time" immediately.
+- Use any CRM lead context below to personalize — do not read field names aloud.
+
+"""
+
 
 async def preload_agent_context(agent: Agent, top_k: int = 5) -> tuple[str, dict[str, Any]]:
     """Fetch core KB chunks for injection at call start. Returns (text block, meta dict)."""
@@ -79,13 +90,46 @@ async def preload_agent_context(agent: Agent, top_k: int = 5) -> tuple[str, dict
         return "", {"chunks": [], "query": PRELOAD_QUERY, "error": str(exc)}
 
 
-def agent_to_live_config(agent: Agent, kb_context: str = "") -> dict[str, Any]:
+def format_lead_context(lead: dict[str, Any]) -> str:
+    """Build a short CRM block for outbound personalization."""
+    if not lead:
+        return ""
+    lines = ["## CRM lead context (personalize naturally, do not read labels aloud)"]
+    for key, label in (
+        ("name", "Name"),
+        ("company", "Company"),
+        ("email", "Email"),
+        ("phone", "Phone"),
+        ("status", "Status"),
+        ("notes", "Notes"),
+    ):
+        val = lead.get(key)
+        if val:
+            lines.append(f"- {label}: {val}")
+    tags = lead.get("tags") or []
+    if tags:
+        lines.append(f"- Tags: {', '.join(str(t) for t in tags)}")
+    return "\n".join(lines) + "\n"
+
+
+def agent_to_live_config(
+    agent: Agent,
+    kb_context: str = "",
+    *,
+    lead_context: str = "",
+    direction: str = "inbound",
+) -> dict[str, Any]:
     """Return config dict consumed by the SIP bridge."""
     agent_type = agent.type.value if hasattr(agent.type, "value") else str(agent.type)
     role_prompt = agent.system_prompt_template or SYSTEM_PROMPTS.get(
         agent_type, SYSTEM_PROMPTS["sales"]
     )
     system_prompt = VOICE_MASTER_PROMPT + role_prompt
+    is_outbound = direction == "outbound" or agent_type == AgentType.outbound_sales.value
+    if is_outbound:
+        system_prompt += OUTBOUND_CALL_SUPPLEMENT
+    if lead_context:
+        system_prompt += "\n\n" + lead_context
     if kb_context:
         system_prompt += "\n\n" + kb_context
     enabled_tools = list(agent.enabled_tools or [])

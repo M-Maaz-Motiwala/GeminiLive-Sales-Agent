@@ -47,10 +47,12 @@ async def system_info() -> dict:
         "sip_user_1001": os.getenv("SIP_USER_1001", "1001"),
         "sip_pass_1001": os.getenv("SIP_PASS_1001", "1001pass"),
         "default_admin_email": os.getenv("ADMIN_EMAIL", "admin@aura.ai"),
+        "outbound_lab_endpoint": os.getenv("OUTBOUND_LAB_ENDPOINT", "PJSIP/1001"),
         "test_extensions": {
             "701": "Maya — Lead Qualifier",
             "702": "Aria — Trangotech Sales",
             "703": "Sam — Support FAQ",
+            "704": "Riley — Cold Outbound (inbound test)",
             "700": "First active agent (legacy)",
             "600": "Echo test",
         },

@@ -54,6 +54,9 @@ export default function Sessions() {
                         {agentName && (
                           <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-zinc-400">{agentName}</span>
                         )}
+                        {(s.meta?.direction === 'outbound' || s.channel_type === 'outbound') && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-orange-500/15 text-orange-300">OUTBOUND</span>
+                        )}
                       </div>
                       <div className="text-xs text-zinc-500 mt-1 truncate">
                         {s.channel_type?.toUpperCase()}
@@ -94,7 +97,7 @@ export default function Sessions() {
         {sessions.length === 0 && (
           <GlassCard className="p-12 text-center">
             <Phone className="w-8 h-8 text-zinc-600 mx-auto mb-3" />
-            <p className="text-sm text-zinc-500">No sessions yet. Dial 701, 702, or 703 from Zoiper.</p>
+            <p className="text-sm text-zinc-500">No sessions yet. Dial 701–703 inbound or use Outbound Calls for lab dialing.</p>
           </GlassCard>
         )}
       </div>

@@ -43,6 +43,11 @@ class Settings(BaseSettings):
 
     # Bridge internal API (shared secret with gemini_bridge container)
     bridge_internal_token: str = "change-me-bridge-token"
+    bridge_url: str = "http://bridge:8000"
+
+    # Outbound lab dial (softphone on same Asterisk — no PSTN trunk yet)
+    outbound_lab_endpoint: str = "PJSIP/1001"
+    outbound_default_caller_id: str = "1000"
 
 
 @lru_cache

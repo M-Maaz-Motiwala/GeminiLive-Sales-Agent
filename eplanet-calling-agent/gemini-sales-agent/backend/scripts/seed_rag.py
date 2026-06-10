@@ -18,6 +18,7 @@ SEED_FILES = {
     "lead-qualifier": "lead-qualification-script.txt",
     "trangotech-sales": "trangotech-services.txt",
     "support-faq": "support-faq.txt",
+    "cold-outbound": "cold-outbound-script.txt",
 }
 
 SEED_DIR = Path(__file__).resolve().parent.parent / "seed_data"

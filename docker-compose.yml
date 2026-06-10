@@ -36,6 +36,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://aura:aura_secret@postgres:5432/aura_db
       REDIS_URL: redis://redis:6379/0
+      BRIDGE_URL: http://bridge:8000
     ports:
       - "8000:8000"
     depends_on:
@@ -43,11 +44,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - uploads_data:/app/uploads
     networks:
       - default
       - voip
+    volumes:
+      - uploads_data:/app/uploads
     healthcheck:
       test:
         - CMD

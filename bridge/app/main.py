@@ -54,19 +54,21 @@ import audioop
 import json
 import logging
 import os
+import secrets
 import socket
 import struct
 import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 import numpy as np
 import samplerate
 import websockets
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException
+from pydantic import BaseModel
 from google import genai
 from google.genai import types
 
@@ -143,8 +145,14 @@ ECHO_GATE_SEC = float(os.getenv("ECHO_GATE_SEC", "0.5"))
 # injected text. The React reference doesn't have any of this.)
 
 # Ring the caller while Gemini connects (standard telephony UX).
+# Applies to INBOUND calls only — outbound skips ringback (see use_inbound_ringback).
 RING_MIN_SEC = float(os.getenv("RING_MIN_SEC", "3"))
 GEMINI_READY_TIMEOUT_SEC = float(os.getenv("GEMINI_READY_TIMEOUT_SEC", "20"))
+
+
+def use_inbound_ringback(call_direction: str) -> bool:
+    """True for caller-dialed extensions (701–704). False for CRM-originated outbound."""
+    return call_direction != "outbound"
 
 # WebRTC APM operates on fixed 10 ms frames. At 16 kHz that's 160
 # samples / 320 bytes PCM16.
@@ -419,6 +427,7 @@ class CallState:
     platform_session_id: Optional[int] = None
     agent_config: dict = field(default_factory=dict)
     call_started_at: float = 0.0
+    call_direction: str = "inbound"  # inbound | outbound
 
     # Buffered streaming transcriptions — flushed per turn / on call end
     user_tx_parts: list[str] = field(default_factory=list)
@@ -487,6 +496,8 @@ class GeminiLiveBridge:
 
         self.platform_url = os.getenv("PLATFORM_URL", "").rstrip("/")
         self.platform_token = os.getenv("BRIDGE_INTERNAL_TOKEN", "")
+        # Outbound originate context keyed by ARI channel id until StasisStart.
+        self._pending_outbound: dict[str, dict[str, Any]] = {}
 
     @staticmethod
     def _resolve_udp_host(host: str) -> str:
@@ -811,9 +822,33 @@ class GeminiLiveBridge:
             dialplan = channel.get("dialplan") or {}
             dialed_extension = dialplan.get("exten")
 
+            pending = self._pending_outbound.pop(channel_id, None)
+            direction = "inbound"
+            lead_id: Optional[int] = None
+            dialed_endpoint: Optional[str] = None
+            if pending:
+                agent_slug = pending.get("agent_slug") or agent_slug
+                lead_id = pending.get("lead_id")
+                dialed_endpoint = pending.get("endpoint")
+                direction = "outbound"
+            elif len(args) > 1 and args[1] == "outbound":
+                direction = "outbound"
+                if len(args) > 2 and str(args[2]).isdigit():
+                    lead_id = int(args[2])
+
+            self.state.call_direction = direction
+
             await self._platform_call_start(
-                channel_id, caller_id, agent_slug, dialed_extension
+                channel_id,
+                caller_id,
+                agent_slug,
+                dialed_extension,
+                direction=direction,
+                lead_id=lead_id,
+                dialed_endpoint=dialed_endpoint,
             )
+
+            inbound_ringback = use_inbound_ringback(direction)
 
             # 1) Open Gemini while the phone is still ringing (not answered).
             self._call_active.set()
@@ -821,12 +856,23 @@ class GeminiLiveBridge:
                 self._gemini_loop(), name=f"gemini-loop-{channel_id}"
             )
 
-            # 2) Ringback so the caller hears ringing while we connect.
-            try:
-                await self.http.post(f"/channels/{channel_id}/ring")
-                logger.info("Ringing channel %s while Gemini connects", channel_id)
-            except Exception:
-                logger.warning("ARI ring failed for %s (continuing)", channel_id)
+            # 2) Inbound only: ringback while Gemini connects. Outbound prospects
+            # already heard their phone ring — never play ringback after pickup.
+            if inbound_ringback:
+                try:
+                    await self.http.post(f"/channels/{channel_id}/ring")
+                    logger.info(
+                        "Inbound ringback on channel %s (ring_min=%.1fs)",
+                        channel_id,
+                        RING_MIN_SEC,
+                    )
+                except Exception:
+                    logger.warning("ARI ring failed for %s (continuing)", channel_id)
+            else:
+                logger.info(
+                    "Outbound call %s — ringback disabled, connecting when Gemini ready",
+                    channel_id,
+                )
 
             # 3) Wait for Gemini session (with timeout).
             try:
@@ -847,16 +893,17 @@ class GeminiLiveBridge:
                     pass
                 return
 
-            # 4) Minimum ring time so setup never feels instant/dead-air.
+            # 4) Inbound only: minimum ring time so setup never feels instant/dead-air.
             elapsed = time.monotonic() - ring_started
-            if elapsed < RING_MIN_SEC:
+            if inbound_ringback and elapsed < RING_MIN_SEC:
                 await asyncio.sleep(RING_MIN_SEC - elapsed)
 
             gemini_wait = time.monotonic() - ring_started
             logger.info(
-                "Gemini ready after %.1fs; answering channel %s",
+                "Gemini ready after %.1fs; answering channel %s (%s)",
                 gemini_wait,
                 channel_id,
+                direction,
             )
 
             # 5) Now answer and wire audio (caller hears agent immediately).
@@ -1044,12 +1091,68 @@ class GeminiLiveBridge:
             headers["X-Bridge-Token"] = self.platform_token
         return headers
 
+    async def originate_call(
+        self,
+        *,
+        endpoint: str,
+        agent_slug: str,
+        lead_id: Optional[int] = None,
+        caller_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Originate an outbound call via ARI; StasisStart loads platform config."""
+        if self.state.active:
+            raise HTTPException(status_code=409, detail="Bridge busy with an active call")
+        assert self.http is not None
+
+        cid = (caller_id or os.getenv("OUTBOUND_DEFAULT_CALLER_ID", "1000")).strip()
+        app_args = [agent_slug, "outbound"]
+        if lead_id is not None:
+            app_args.append(str(lead_id))
+
+        payload = {
+            "endpoint": endpoint,
+            "app": self.ari_app,
+            "appArgs": ",".join(app_args),
+            "callerId": f'"Aura" <{cid}>',
+        }
+        resp = await self.http.post("/channels", json=payload)
+        if resp.status_code >= 400:
+            detail = resp.text
+            try:
+                detail = resp.json()
+            except Exception:
+                pass
+            raise HTTPException(status_code=502, detail=f"ARI originate failed: {detail}")
+        data = resp.json()
+        channel_id = data.get("id")
+        if not channel_id:
+            raise HTTPException(status_code=502, detail="ARI originate returned no channel id")
+
+        self._pending_outbound[channel_id] = {
+            "agent_slug": agent_slug,
+            "lead_id": lead_id,
+            "endpoint": endpoint,
+            "direction": "outbound",
+        }
+        logger.info(
+            "Originated outbound channel=%s agent=%s endpoint=%s lead=%s",
+            channel_id,
+            agent_slug,
+            endpoint,
+            lead_id,
+        )
+        return {"channel_id": channel_id, "status": "originating", "endpoint": endpoint}
+
     async def _platform_call_start(
         self,
         channel_id: str,
         caller_id: Optional[str],
         agent_slug: Optional[str] = None,
         dialed_extension: Optional[str] = None,
+        *,
+        direction: str = "inbound",
+        lead_id: Optional[int] = None,
+        dialed_endpoint: Optional[str] = None,
     ) -> None:
         """Load per-call agent config from the platform API."""
         self.state.call_started_at = time.monotonic()
@@ -1065,11 +1168,19 @@ class GeminiLiveBridge:
             return
         try:
             assert self.http is not None
-            payload: dict = {"channel_id": channel_id, "caller_id": caller_id}
+            payload: dict = {
+                "channel_id": channel_id,
+                "caller_id": caller_id,
+                "direction": direction,
+            }
             if agent_slug:
                 payload["agent_slug"] = agent_slug
             if dialed_extension:
                 payload["dialed_extension"] = dialed_extension
+            if lead_id is not None:
+                payload["lead_id"] = lead_id
+            if dialed_endpoint:
+                payload["dialed_endpoint"] = dialed_endpoint
             resp = await self.http.post(
                 f"{self.platform_url}/internal/calls/start",
                 json=payload,
@@ -1701,6 +1812,32 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+class OriginateIn(BaseModel):
+    agent_slug: str
+    endpoint: str
+    lead_id: Optional[int] = None
+    caller_id: Optional[str] = None
+
+
+def _verify_bridge_token(x_bridge_token: str = Header(..., alias="X-Bridge-Token")) -> None:
+    expected = os.getenv("BRIDGE_INTERNAL_TOKEN", "")
+    if not expected or not secrets.compare_digest(x_bridge_token, expected):
+        raise HTTPException(status_code=403, detail="Invalid bridge token")
+
+
+@app.post("/internal/originate")
+async def internal_originate(
+    body: OriginateIn,
+    _: None = Depends(_verify_bridge_token),
+):
+    return await bridge.originate_call(
+        endpoint=body.endpoint,
+        agent_slug=body.agent_slug,
+        lead_id=body.lead_id,
+        caller_id=body.caller_id,
+    )
 
 
 @app.get("/health")

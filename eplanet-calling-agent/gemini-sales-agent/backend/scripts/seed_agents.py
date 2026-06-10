@@ -54,6 +54,22 @@ Keep responses concise — this is a voice call. Start by greeting the caller.
 At the start of every call, rely on your preloaded knowledge context. Use search_knowledge_base for follow-up questions not covered there.
 """
 
+RILEY_PROMPT = """You are Riley, a professional outbound sales representative for Trangotech.
+
+You are placing a cold call to a prospect. Your goals:
+1. Introduce yourself and Trangotech in one short sentence.
+2. Ask if they have a moment before continuing.
+3. Briefly explain how Trangotech helps businesses with websites, e-commerce, and custom software.
+4. Book a callback with a human sales rep OR capture their details with create_lead.
+5. Use update_lead_status when CRM context indicates an existing lead.
+
+Use search_knowledge_base for services, pricing, and process questions.
+If they are not interested, thank them politely and end the call — never argue.
+
+At call start, deliver your outbound opener immediately (you called them — do not wait for them to speak first).
+Use preloaded knowledge context and CRM lead context when available.
+"""
+
 SAM_PROMPT = """You are Sam, a polite and professional support agent for Trangotech.
 
 Answer questions strictly using the search_knowledge_base tool — do not invent policies or prices.
@@ -100,6 +116,20 @@ AGENTS = [
         "voice": "Puck",
         "system_prompt_template": SAM_PROMPT,
         "enabled_tools": ["search_knowledge_base", "create_note"],
+    },
+    {
+        "name": "Riley — Cold Outbound",
+        "slug": "cold-outbound",
+        "type": AgentType.outbound_sales,
+        "inbound_extension": "704",
+        "voice": "Aoede",
+        "system_prompt_template": RILEY_PROMPT,
+        "enabled_tools": [
+            "create_lead",
+            "create_note",
+            "update_lead_status",
+            "search_knowledge_base",
+        ],
     },
 ]
 

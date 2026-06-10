@@ -15,6 +15,7 @@ from backend.routers.documents import router as documents_router
 from backend.routers.outputs import router as outputs_router
 from backend.routers.ws_browser import router as ws_router
 from backend.routers.calls import router as calls_router
+from backend.routers.outbound import router as outbound_router
 from backend.routers.internal_bridge import router as internal_bridge_router
 from backend.routers.system import router as system_router
 from backend.db.database import init_db
@@ -56,6 +57,7 @@ app.include_router(documents_router)
 app.include_router(outputs_router)
 app.include_router(ws_router)
 app.include_router(calls_router)
+app.include_router(outbound_router)
 app.include_router(internal_bridge_router)
 app.include_router(system_router)
 

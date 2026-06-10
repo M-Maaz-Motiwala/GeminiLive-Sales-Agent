@@ -8,6 +8,7 @@ import Agents from '@/src/pages/admin/Agents';
 import Sessions from '@/src/pages/admin/Sessions';
 import SessionDetail from '@/src/pages/admin/SessionDetail';
 import Leads from '@/src/pages/admin/Leads';
+import Outbound from '@/src/pages/admin/Outbound';
 import Contacts from '@/src/pages/admin/Contacts';
 import Documents from '@/src/pages/admin/Documents';
 import Outputs from '@/src/pages/admin/Outputs';
@@ -31,6 +32,7 @@ export default function App() {
             <Route path="sessions" element={<Sessions />} />
             <Route path="sessions/:id" element={<SessionDetail />} />
             <Route path="leads" element={<Leads />} />
+            <Route path="outbound" element={<Outbound />} />
             <Route path="contacts" element={<Contacts />} />
             <Route path="documents" element={<Documents />} />
             <Route path="outputs" element={<Outputs />} />

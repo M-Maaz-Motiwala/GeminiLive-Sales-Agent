@@ -22,6 +22,7 @@ class AgentType(str, enum.Enum):
     code_analysis = "code_analysis"
     document_qa = "document_qa"
     lead_qualification = "lead_qualification"
+    outbound_sales = "outbound_sales"
     summarization = "summarization"
     router = "router"
 
@@ -35,6 +36,7 @@ class SessionStatus(str, enum.Enum):
 class ChannelType(str, enum.Enum):
     web = "web"
     sip = "sip"
+    outbound = "outbound"
 
 
 class LeadStatus(str, enum.Enum):
@@ -56,6 +58,7 @@ class OutputType(str, enum.Enum):
     summary = "summary"
     lead_capture = "lead_capture"
     action_items = "action_items"
+    call_disposition = "call_disposition"
     research_report = "research_report"
     code_analysis = "code_analysis"
 

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useAuth } from '@/src/auth/AuthContext';
-import { Plus, Pencil, Trash2, X, Phone } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, Phone, PhoneOutgoing } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { API_BASE, apiFetch, apiFetchList, apiFetchPublic } from '@/src/lib/api';
 import { PageHeader, GlassCard, BtnPrimary, BtnGhost, Badge } from '@/src/components/admin/theme';
@@ -11,7 +11,7 @@ const RAG_TOOLS = ['search_knowledge_base'];
 const SEARCH_TOOLS = ['google_search'];
 const VOICES = ['Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Aoede'];
 const MODELS = ['gemini-3.1-flash-live-preview', 'gemini-2.5-flash-native-audio-preview-12-2025'];
-const TYPES = ['sales', 'research', 'code_analysis', 'document_qa', 'lead_qualification', 'summarization', 'router'];
+const TYPES = ['sales', 'outbound_sales', 'research', 'code_analysis', 'document_qa', 'lead_qualification', 'summarization', 'router'];
 
 const EMPTY = {
   name: '', type: 'sales', system_prompt_template: '', voice: 'Zephyr',
@@ -79,7 +79,7 @@ export default function Agents() {
     <div className="p-6 lg:p-10">
       <PageHeader
         title="AI Agents"
-        subtitle="Each agent has a SIP extension — dial from Zoiper on your LAN"
+        subtitle="Inbound: dial extension from Zoiper · Outbound: dial from Outbound Calls in CRM"
         action={<BtnPrimary onClick={() => { setEditing(null); setForm({ ...EMPTY }); setError(''); setOpen(true); }}><Plus className="w-4 h-4" /> New agent</BtnPrimary>}
       />
 
@@ -96,6 +96,9 @@ export default function Agents() {
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-semibold text-white">{a.name}</span>
                 {a.is_active && <Badge variant="success">Active</Badge>}
+                {a.type === 'outbound_sales' && (
+                  <Badge variant="warn">Outbound</Badge>
+                )}
                 {a.inbound_extension && (
                   <Badge variant="default">Ext {a.inbound_extension}</Badge>
                 )}
@@ -103,13 +106,27 @@ export default function Agents() {
               <p className="text-xs text-zinc-500 mt-1">
                 {a.type} · {a.voice} · {a.enabled_tools?.length || 0} tools · {a.document_count || 0} KB docs
               </p>
-              {a.inbound_extension && sipServer && (
+              {a.type === 'outbound_sales' ? (
+                <p className="text-xs text-orange-400/80 mt-2 flex items-center gap-1">
+                  <PhoneOutgoing className="w-3 h-3" />
+                  <Link to={`/admin/outbound?agent_id=${a.id}`} className="hover:underline">
+                    Dial from CRM → Outbound Calls
+                  </Link>
+                </p>
+              ) : a.inbound_extension && sipServer ? (
                 <p className="text-xs text-violet-400/80 mt-2 flex items-center gap-1">
                   <Phone className="w-3 h-3" /> Zoiper → {sipServer} → dial {a.inbound_extension}
                 </p>
-              )}
+              ) : null}
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
+              {a.type === 'outbound_sales' && (
+                <Link to={`/admin/outbound?agent_id=${a.id}`}>
+                  <BtnGhost className="text-orange-300 border-orange-500/20 hover:bg-orange-500/10">
+                    <PhoneOutgoing className="w-4 h-4" /> Dial
+                  </BtnGhost>
+                </Link>
+              )}
               <BtnGhost onClick={() => { setEditing(a); setForm({ name: a.name, type: a.type, system_prompt_template: a.system_prompt_template, voice: a.voice, model: a.model, inbound_extension: a.inbound_extension || '', enabled_tools: a.enabled_tools || [], is_active: a.is_active }); setOpen(true); }}>
                 <Pencil className="w-4 h-4" /> Edit
               </BtnGhost>

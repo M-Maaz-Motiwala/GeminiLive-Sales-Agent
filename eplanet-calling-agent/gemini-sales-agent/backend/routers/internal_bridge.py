@@ -16,12 +16,17 @@ from backend.db.database import get_db
 from backend.db.models import (
     Agent,
     ChannelType,
+    Lead,
     Message,
     Session as DBSession,
     SessionStatus,
 )
 from backend.services import tool_executor
-from backend.services.live_config import agent_to_live_config, preload_agent_context
+from backend.services.live_config import (
+    agent_to_live_config,
+    format_lead_context,
+    preload_agent_context,
+)
 from backend.services.post_call import process_call_end
 from backend.services.session_metrics import finalize_session_metrics
 from backend.services.token_meter import estimate_text_tokens
@@ -43,6 +48,9 @@ class CallStartIn(BaseModel):
     caller_id: Optional[str] = None
     agent_slug: Optional[str] = None
     dialed_extension: Optional[str] = None
+    direction: Literal["inbound", "outbound"] = "inbound"
+    lead_id: Optional[int] = None
+    dialed_endpoint: Optional[str] = None
 
 
 class TranscriptIn(BaseModel):
@@ -112,16 +120,39 @@ async def call_start(
     _: None = Depends(_verify_bridge_token),
 ) -> dict[str, Any]:
     agent = await _resolve_agent(db, body)
-    meta = {"channel_id": body.channel_id}
+    direction = body.direction or "inbound"
+    meta: dict[str, Any] = {"channel_id": body.channel_id, "direction": direction}
     if body.dialed_extension:
         meta["dialed_extension"] = body.dialed_extension
     if body.agent_slug:
         meta["agent_slug"] = body.agent_slug
+    if body.dialed_endpoint:
+        meta["dialed_endpoint"] = body.dialed_endpoint
+    if body.lead_id is not None:
+        meta["lead_id"] = body.lead_id
+
+    lead_context = ""
+    if body.lead_id is not None:
+        lead_row = await db.get(Lead, body.lead_id)
+        if lead_row:
+            lead_context = format_lead_context(
+                {
+                    "name": lead_row.name,
+                    "email": lead_row.email,
+                    "phone": lead_row.phone,
+                    "company": lead_row.company,
+                    "status": lead_row.status.value if lead_row.status else None,
+                    "notes": lead_row.notes,
+                    "tags": lead_row.tags or [],
+                }
+            )
+
+    channel_type = ChannelType.outbound if direction == "outbound" else ChannelType.sip
 
     db_session = DBSession(
         agent_id=agent.id,
         caller_id=body.caller_id,
-        channel_type=ChannelType.sip,
+        channel_type=channel_type,
         status=SessionStatus.active,
         meta=meta,
     )
@@ -131,7 +162,12 @@ async def call_start(
     kb_block, kb_meta = await preload_agent_context(agent)
     meta["preloaded_kb"] = kb_meta
 
-    config = agent_to_live_config(agent, kb_context=kb_block)
+    config = agent_to_live_config(
+        agent,
+        kb_context=kb_block,
+        lead_context=lead_context,
+        direction=direction,
+    )
     config["session_id"] = db_session.id
 
     context_tokens = estimate_text_tokens(config.get("system_instruction", ""))
@@ -148,12 +184,14 @@ async def call_start(
     await db.flush()
 
     logger.info(
-        "SIP call started session=%d agent=%s ext=%s channel=%s caller=%s",
+        "Call started session=%d agent=%s direction=%s ext=%s channel=%s caller=%s lead=%s",
         db_session.id,
         agent.slug,
+        direction,
         body.dialed_extension,
         body.channel_id,
         body.caller_id,
+        body.lead_id,
     )
     return config
 

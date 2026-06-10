@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/src/auth/AuthContext';
-import { Users, Search, ExternalLink } from 'lucide-react';
+import { Users, Search, ExternalLink, PhoneOutgoing } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { PageHeader, GlassCard } from '@/src/components/admin/theme';
+import { PageHeader, GlassCard, BtnGhost } from '@/src/components/admin/theme';
 import { API_BASE, apiFetchList } from '@/src/lib/api';
+import { dialOutbound, fetchOutboundAgents } from '@/src/lib/outbound';
 
 const STATUSES = ['new', 'qualified', 'contacted', 'closed', 'lost'];
 
@@ -15,6 +16,9 @@ export default function Leads() {
   const [leads, setLeads] = useState<any[]>([]);
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
+  const [outboundAgentId, setOutboundAgentId] = useState<number | null>(null);
+  const [dialingId, setDialingId] = useState<number | null>(null);
+  const [dialMsg, setDialMsg] = useState('');
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const load = (status = statusFilter, q = search) => {
@@ -25,7 +29,32 @@ export default function Leads() {
     apiFetchList(`/api/leads${qs}`, token).then(setLeads);
   };
 
-  useEffect(() => { load(); }, [token, statusFilter]);
+  useEffect(() => {
+    load();
+    if (token) {
+      fetchOutboundAgents(token).then(agents => {
+        const riley = agents.find(a => a.slug === 'cold-outbound') ?? agents[0];
+        setOutboundAgentId(riley?.id ?? null);
+      });
+    }
+  }, [token, statusFilter]);
+
+  const callLead = async (lead: any) => {
+    if (!outboundAgentId) {
+      setDialMsg('No outbound agent — run bootstrap or open Outbound Calls.');
+      return;
+    }
+    setDialingId(lead.id);
+    setDialMsg('');
+    try {
+      await dialOutbound(token, { agent_id: outboundAgentId, lead_id: lead.id });
+      setDialMsg(`Dialing lead #${lead.id} — answer on Zoiper 1001.`);
+    } catch (e) {
+      setDialMsg(e instanceof Error ? e.message : 'Dial failed');
+    } finally {
+      setDialingId(null);
+    }
+  };
 
   const updateStatus = async (lead: any, status: string) => {
     await fetch(`${API_BASE}/api/leads/${lead.id}`, {
@@ -38,7 +67,23 @@ export default function Leads() {
 
   return (
     <div className="p-6 lg:p-8">
-      <PageHeader title="Leads" subtitle="CRM leads from calls and agent tools" />
+      <PageHeader
+        title="Leads"
+        subtitle="CRM leads from calls — use Call to dial with lead context (outbound)"
+        action={
+          <Link to="/admin/outbound">
+            <BtnGhost>
+              <PhoneOutgoing className="w-4 h-4" /> Outbound Calls
+            </BtnGhost>
+          </Link>
+        }
+      />
+
+      {dialMsg && (
+        <p className="text-sm text-violet-300 bg-violet-500/10 border border-violet-500/20 rounded-xl px-4 py-2 mb-4">
+          {dialMsg}
+        </p>
+      )}
 
       <div className="flex flex-col sm:flex-row gap-3 mb-6">
         <div className="relative flex-1 max-w-sm">
@@ -97,9 +142,20 @@ export default function Leads() {
                   </div>
                 </div>
               </div>
-              <select value={l.status} onChange={e => updateStatus(l, e.target.value)} className={selectCls}>
-                {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
+              <div className="flex flex-col sm:items-end gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => callLead(l)}
+                  disabled={dialingId === l.id || !outboundAgentId}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-semibold uppercase tracking-wide border border-orange-500/30 text-orange-300 hover:bg-orange-500/10 disabled:opacity-50"
+                >
+                  <PhoneOutgoing className="w-3.5 h-3.5" />
+                  {dialingId === l.id ? 'Dialing…' : 'Call'}
+                </button>
+                <select value={l.status} onChange={e => updateStatus(l, e.target.value)} className={selectCls}>
+                  {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
             </div>
           </GlassCard>
         ))}
