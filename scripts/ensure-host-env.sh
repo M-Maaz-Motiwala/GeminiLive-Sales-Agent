@@ -25,8 +25,30 @@ read_env() {
   fi
 }
 
+is_wsl() {
+  grep -qi microsoft /proc/version 2>/dev/null
+}
+
+# WSL "auto" often returns 172.x (Linux VM) — Windows Zoiper cannot reach that.
+# Ask Windows for the real Wi-Fi/Ethernet IPv4 Docker Desktop exposes on.
+detect_windows_lan_ip() {
+  if ! is_wsl || ! command -v powershell.exe >/dev/null 2>&1; then
+    return 0
+  fi
+  powershell.exe -NoProfile -Command \
+    "Get-NetIPAddress -AddressFamily IPv4 | Where-Object { \$_.IPAddress -notlike '127.*' -and \$_.IPAddress -notlike '169.254.*' -and \$_.PrefixOrigin -ne 'WellKnown' } | Sort-Object -Property InterfaceMetric | Select-Object -First 1 -ExpandProperty IPAddress" \
+    2>/dev/null | tr -d '\r' | head -1
+}
+
 detect_lan_ip() {
   local ip=""
+  if is_wsl; then
+    ip=$(detect_windows_lan_ip || true)
+    if [ -n "$ip" ]; then
+      echo "$ip"
+      return
+    fi
+  fi
   ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')
   if [ -z "$ip" ]; then
     ip=$(hostname -I 2>/dev/null | awk '{print $1}')
@@ -34,16 +56,32 @@ detect_lan_ip() {
   echo "$ip"
 }
 
+is_likely_wsl_vm_ip() {
+  local ip="$1"
+  is_wsl && [[ "$ip" =~ ^172\.(1[6-9]|2[0-9]|3[0-1])\. ]]
+}
+
 OLD_IP=""
 if [ -f "$HOST_ENV" ]; then
   OLD_IP=$(grep -E '^EXTERNAL_IP=' "$HOST_ENV" 2>/dev/null | tail -1 | cut -d= -f2- || true)
 fi
 
-# EXTERNAL_IP=auto (default) | fixed IPv4 e.g. 172.17.1.130 | empty = auto
+# EXTERNAL_IP=auto (default) | windows (WSL→Windows LAN) | fixed IPv4 e.g. 192.168.1.50
 EXTERNAL_IP_CFG=$(read_env EXTERNAL_IP "auto")
 if [ -z "$EXTERNAL_IP_CFG" ] || [ "$EXTERNAL_IP_CFG" = "auto" ]; then
   IP=$(detect_lan_ip)
   IP_SOURCE="auto-detected"
+  if is_wsl && [ -n "$IP" ]; then
+    IP_SOURCE="Windows LAN (WSL auto)"
+  fi
+elif [ "$EXTERNAL_IP_CFG" = "windows" ] || [ "$EXTERNAL_IP_CFG" = "win" ]; then
+  IP=$(detect_windows_lan_ip || true)
+  IP_SOURCE="Windows LAN (powershell)"
+  if [ -z "$IP" ]; then
+    echo "ERROR: could not detect Windows LAN IP from WSL. Set EXTERNAL_IP=192.168.x.x in .env" >&2
+    echo "       Tip: run 'ipconfig' in Windows CMD and use your Wi-Fi IPv4 Address." >&2
+    exit 1
+  fi
 else
   IP="$EXTERNAL_IP_CFG"
   IP_SOURCE="from .env"
@@ -52,6 +90,17 @@ fi
 if [ -z "$IP" ]; then
   echo "ERROR: could not detect LAN IP. Set EXTERNAL_IP=your.pc.ip in .env" >&2
   exit 1
+fi
+
+if is_likely_wsl_vm_ip "$IP"; then
+  echo "WARNING: detected WSL VM IP ${IP} — Zoiper on Windows usually cannot register to this." >&2
+  echo "         Set EXTERNAL_IP=windows in .env, or your Windows Wi-Fi IP from 'ipconfig'." >&2
+fi
+
+if [ "$IP" = "127.0.0.1" ] || [ "$IP" = "localhost" ]; then
+  echo "WARNING: EXTERNAL_IP=${IP} registers in Zoiper but often causes ~30s call drops." >&2
+  echo "         Use EXTERNAL_IP=auto (WSL) or your Windows Wi-Fi IP from 'ipconfig'." >&2
+  echo "         Zoiper SIP server should match EXTERNAL_IP (not 127.0.0.1 for long calls)." >&2
 fi
 
 SIP_PORT=$(read_env SIP_PORT "5060")

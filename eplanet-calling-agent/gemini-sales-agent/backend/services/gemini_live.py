@@ -7,8 +7,11 @@ from typing import Callable, Optional, Awaitable
 from google import genai
 from google.genai import types
 
+import json
+
 from backend.config import get_settings
 from backend.services import tool_executor, session_manager
+from backend.services.token_meter import SessionTokenUsage, extract_usage_metadata
 from backend.db.models import Session as DBSession, Message, SessionStatus
 
 logger = logging.getLogger(__name__)
@@ -70,6 +73,7 @@ class GeminiLiveSession:
         self._session_task: Optional[asyncio.Task] = None
         self._session_ready = asyncio.Event()
         self.is_running = False
+        self.token_usage = SessionTokenUsage()
 
     def _build_config(self) -> dict:
         agent_type = self.agent_config.get("type", "sales")
@@ -100,6 +104,7 @@ class GeminiLiveSession:
         self._client = genai.Client(api_key=settings.gemini_api_key)
         model = self.agent_config.get("model", "gemini-3.1-flash-live-preview")
         config = self._build_config()
+        self.token_usage.add_text_context(config.get("system_instruction", ""))
         # Launch session in a background task that keeps the async with block open
         self._session_task = asyncio.create_task(self._run_session(model, config))
         # Wait until the session is actually connected before returning
@@ -126,9 +131,13 @@ class GeminiLiveSession:
 
     async def send_initial_greeting(self):
         """Prompt Gemini to introduce itself at the start of the call."""
+        greeting = (
+            "The call has just connected. Please greet the caller warmly and introduce yourself."
+        )
         if self._session and self.is_running:
+            self.token_usage.add_text_context(greeting)
             await self._session.send_client_content(
-                turns=[{"role": "user", "parts": [{"text": "The call has just connected. Please greet the caller warmly and introduce yourself."}]}],
+                turns=[{"role": "user", "parts": [{"text": greeting}]}],
                 turn_complete=False,
             )
 
@@ -136,6 +145,7 @@ class GeminiLiveSession:
         """Send base64-encoded 16-bit PCM (16kHz) audio to Gemini (used by WebSocket browser path)."""
         if self._session and self.is_running:
             raw_bytes = base64.b64decode(pcm_base64)
+            self.token_usage.add_audio_input(len(raw_bytes), sample_rate_hz=16000)
             await self._session.send_realtime_input(
                 audio=types.Blob(data=raw_bytes, mime_type="audio/pcm;rate=16000")
             )
@@ -143,6 +153,7 @@ class GeminiLiveSession:
     async def send_audio_bytes(self, pcm_bytes: bytes):
         """Send raw PCM bytes to Gemini (used by RTP bridge / SIP path)."""
         if self._session and self.is_running:
+            self.token_usage.add_audio_input(len(pcm_bytes), sample_rate_hz=16000)
             await self._session.send_realtime_input(
                 audio=types.Blob(data=pcm_bytes, mime_type="audio/pcm;rate=16000")
             )
@@ -155,6 +166,7 @@ class GeminiLiveSession:
                 got_response = False
                 async for response in self._session.receive():
                     got_response = True
+                    self.token_usage.merge_api_usage(extract_usage_metadata(response))
                     sc = response.server_content
                     mt = sc.model_turn if sc else None
                     parts = mt.parts if mt else []
@@ -171,6 +183,10 @@ class GeminiLiveSession:
                         for part in response.server_content.model_turn.parts:
                             if part.inline_data and part.inline_data.data:
                                 logger.info(f"Session {self.db_session_id} sending {len(part.inline_data.data)} audio bytes to on_audio, on_audio set={self.on_audio is not None}")
+                                audio_data = part.inline_data.data
+                                if isinstance(audio_data, str):
+                                    audio_data = audio_data.encode()
+                                self.token_usage.add_audio_output(len(audio_data), sample_rate_hz=24000)
                                 if self.on_audio:
                                     await self.on_audio(part.inline_data.data)
 
@@ -188,6 +204,7 @@ class GeminiLiveSession:
                         # User audio transcription
                         if sc.input_transcription and sc.input_transcription.text:
                             text = sc.input_transcription.text
+                            self.token_usage.add_text_output(text)
                             if self.on_text:
                                 await self.on_text("user", text)
                             await self._persist_message("user", text)
@@ -195,6 +212,7 @@ class GeminiLiveSession:
                         # Output transcription (model speech as text)
                         if sc.output_transcription and sc.output_transcription.text:
                             text = sc.output_transcription.text
+                            self.token_usage.add_text_output(text)
                             if self.on_text:
                                 await self.on_text("model", text)
 
@@ -242,6 +260,12 @@ class GeminiLiveSession:
         responses = await asyncio.gather(
             *[run_one(fc) for fc in tool_call.function_calls]
         )
+        for fr in responses:
+            try:
+                payload = json.dumps(fr.response) if fr.response is not None else ""
+            except (TypeError, ValueError):
+                payload = str(fr.response)
+            self.token_usage.add_text_context(payload)
         await self._session.send_tool_response(function_responses=list(responses))
 
     async def _persist_message(self, role: str, text: str):
@@ -267,11 +291,22 @@ class GeminiLiveSession:
             from sqlalchemy import update
             from backend.db.models import Session as DBSession, SessionStatus
             from datetime import datetime, timezone
-            await self.db.execute(
-                update(DBSession)
-                .where(DBSession.id == session_id)
-                .values(status=SessionStatus.ended, ended_at=datetime.now(timezone.utc))
-            )
+            from sqlalchemy import select
+
+            result = await self.db.execute(select(DBSession).where(DBSession.id == session_id))
+            db_session = result.scalar_one_or_none()
+            if db_session:
+                meta = dict(db_session.meta or {})
+                meta["token_usage"] = self.token_usage.to_dict()
+                db_session.status = SessionStatus.ended
+                db_session.ended_at = datetime.now(timezone.utc)
+                db_session.meta = meta
+            else:
+                await self.db.execute(
+                    update(DBSession)
+                    .where(DBSession.id == session_id)
+                    .values(status=SessionStatus.ended, ended_at=datetime.now(timezone.utc))
+                )
             await self.db.commit()
         except Exception as e:
             logger.warning(f"Failed to update session status: {e}")
@@ -279,7 +314,16 @@ class GeminiLiveSession:
         logger.info(f"GeminiLiveSession {session_id} closed.")
         try:
             from backend.services.post_call import process_call_end
-            asyncio.create_task(process_call_end(session_id))
+            from backend.services.session_metrics import finalize_session_metrics
+            from backend.db.database import AsyncSessionLocal
+
+            async def _finalize_and_post_call():
+                async with AsyncSessionLocal() as db:
+                    await finalize_session_metrics(db, session_id)
+                    await db.commit()
+                await process_call_end(session_id)
+
+            asyncio.create_task(_finalize_and_post_call())
         except Exception as e:
             logger.warning(f"Failed to queue post-call for session {session_id}: {e}")
         try:

@@ -40,7 +40,7 @@ async def preload_agent_context(agent: Agent, top_k: int = 5) -> tuple[str, dict
 
         agent_type = agent.type.value if hasattr(agent.type, "value") else str(agent.type)
         query = f"{agent.name} {agent_type} {PRELOAD_QUERY}"
-        results = await rag_service.query(query, agent.id, top_k=top_k)
+        results, latency_ms = await rag_service.query_with_timing(query, agent.id, top_k=top_k)
         if not results:
             logger.warning("No KB chunks preloaded for agent %s", agent.slug)
             return "", {"chunks": [], "query": query, "skipped": "no_results"}
@@ -63,7 +63,17 @@ async def preload_agent_context(agent: Agent, top_k: int = 5) -> tuple[str, dict
             "The following is from your knowledge base — rely on it for opening context and common questions:\n\n"
             + "\n\n".join(lines)
         )
-        return block, {"chunks": chunks_meta, "query": query}
+        from backend.services.rag_metrics import compute_query_metrics
+
+        rag_eval = compute_query_metrics(
+            query, results, latency_ms=latency_ms, top_k=top_k, source="preload"
+        )
+        return block, {
+            "chunks": chunks_meta,
+            "query": query,
+            "latency_ms": latency_ms,
+            "metrics": rag_eval,
+        }
     except Exception as exc:
         logger.warning("KB preload failed for agent %s: %s", agent.slug, exc)
         return "", {"chunks": [], "query": PRELOAD_QUERY, "error": str(exc)}

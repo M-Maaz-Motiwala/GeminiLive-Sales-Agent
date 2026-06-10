@@ -103,6 +103,8 @@ export default function SessionDetail() {
   const duration = session.meta?.duration_sec;
   const dialedExt = session.meta?.dialed_extension;
   const bridgeStats = session.meta?.bridge_stats || {};
+  const tokenUsage = session.meta?.token_usage;
+  const ragMetrics = session.meta?.rag_metrics;
   const postCall = session.meta?.post_call;
   const timeline: TimelineEvent[] = session.timeline || [];
   const summaryOutput = (session.outputs || []).find((o: any) => o.output_type === 'summary');
@@ -243,6 +245,64 @@ export default function SessionDetail() {
               accent="cyan"
             />
           </div>
+
+          {tokenUsage && (
+            <GlassCard className="p-4 border-amber-500/20">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-amber-400 mb-3">
+                <BarChart3 className="w-3.5 h-3.5" /> Token usage (est.)
+              </div>
+              <dl className="space-y-1.5 text-xs text-zinc-400">
+                <div className="flex justify-between">
+                  <dt>Audio input (user)</dt>
+                  <dd className="text-zinc-300">{tokenUsage.audio_input_tokens?.toLocaleString()} tok</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt>Text context (prompt/tools)</dt>
+                  <dd className="text-zinc-300">{tokenUsage.text_input_context_tokens?.toLocaleString()} tok</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt>Audio output (agent)</dt>
+                  <dd className="text-zinc-300">{tokenUsage.audio_output_tokens?.toLocaleString()} tok</dd>
+                </div>
+                {tokenUsage.text_output_tokens > 0 && (
+                  <div className="flex justify-between">
+                    <dt>Transcription output</dt>
+                    <dd className="text-zinc-300">{tokenUsage.text_output_tokens?.toLocaleString()} tok</dd>
+                  </div>
+                )}
+                <div className="flex justify-between border-t border-white/5 pt-2 mt-2">
+                  <dt className="text-zinc-300">Total estimated</dt>
+                  <dd className="text-amber-300 font-medium">{tokenUsage.estimated_total_tokens?.toLocaleString()} tok</dd>
+                </div>
+                {tokenUsage.pricing_estimate_usd?.total_usd != null && (
+                  <div className="flex justify-between">
+                    <dt>Est. cost</dt>
+                    <dd className="text-emerald-300">${tokenUsage.pricing_estimate_usd.total_usd.toFixed(4)}</dd>
+                  </div>
+                )}
+                {(tokenUsage.audio_input_sec != null || tokenUsage.audio_output_sec != null) && (
+                  <div className="text-[10px] text-zinc-600 pt-1">
+                    Audio: {tokenUsage.audio_input_sec ?? 0}s in · {tokenUsage.audio_output_sec ?? 0}s out
+                  </div>
+                )}
+              </dl>
+            </GlassCard>
+          )}
+
+          {ragMetrics && ragMetrics.query_count > 0 && (
+            <GlassCard className="p-4 border-cyan-500/20">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-cyan-400 mb-3">
+                <BarChart3 className="w-3.5 h-3.5" /> RAG metrics
+              </div>
+              <dl className="space-y-1.5 text-xs text-zinc-400">
+                <div className="flex justify-between"><dt>Queries</dt><dd className="text-zinc-300">{ragMetrics.query_count}</dd></div>
+                <div className="flex justify-between"><dt>Avg top score</dt><dd className="text-zinc-300">{ragMetrics.avg_top_score}</dd></div>
+                <div className="flex justify-between"><dt>Avg latency</dt><dd className="text-zinc-300">{ragMetrics.avg_latency_ms} ms</dd></div>
+                <div className="flex justify-between"><dt>High relevance</dt><dd className="text-emerald-300">{ragMetrics.high_relevance_queries}</dd></div>
+                <div className="flex justify-between"><dt>No results</dt><dd className="text-zinc-300">{ragMetrics.no_result_queries}</dd></div>
+              </dl>
+            </GlassCard>
+          )}
 
           {(bridgeStats.gemini_turns != null || bridgeStats.interruptions != null) && (
             <GlassCard className="p-4">

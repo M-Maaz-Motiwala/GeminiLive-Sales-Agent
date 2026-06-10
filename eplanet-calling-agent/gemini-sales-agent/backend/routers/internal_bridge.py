@@ -23,6 +23,8 @@ from backend.db.models import (
 from backend.services import tool_executor
 from backend.services.live_config import agent_to_live_config, preload_agent_context
 from backend.services.post_call import process_call_end
+from backend.services.session_metrics import finalize_session_metrics
+from backend.services.token_meter import estimate_text_tokens
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -62,6 +64,7 @@ class CallEndIn(BaseModel):
     channel_id: Optional[str] = None
     duration_sec: Optional[float] = None
     stats: dict[str, Any] = Field(default_factory=dict)
+    token_usage: dict[str, Any] = Field(default_factory=dict)
 
 
 async def _resolve_agent(db: AsyncSession, body: CallStartIn) -> Agent:
@@ -130,6 +133,17 @@ async def call_start(
 
     config = agent_to_live_config(agent, kb_context=kb_block)
     config["session_id"] = db_session.id
+
+    context_tokens = estimate_text_tokens(config.get("system_instruction", ""))
+    for tool_entry in config.get("tools") or []:
+        for fd in tool_entry.get("function_declarations") or []:
+            context_tokens += estimate_text_tokens(
+                (fd.get("name") or "") + (fd.get("description") or "")
+            )
+    meta["token_usage_baseline"] = {
+        "text_input_context_tokens": context_tokens,
+        "note": "System prompt + tool declarations at call start (included in session total)",
+    }
     db_session.meta = meta
     await db.flush()
 
@@ -200,10 +214,18 @@ async def call_end(
     if body.channel_id:
         meta["channel_id"] = body.channel_id
     db_session.meta = meta
+
+    usage = dict(body.token_usage) if body.token_usage else None
+    await finalize_session_metrics(db, body.session_id, token_usage=usage)
+    # Commit metrics before post-call runs — otherwise process_call_end loads stale
+    # meta and overwrites token_usage / rag_metrics when it finishes (~30s later).
+    await db.commit()
+
     logger.info(
-        "SIP call ended session=%d duration=%.1fs",
+        "SIP call ended session=%d duration=%.1fs tokens=%s",
         body.session_id,
         body.duration_sec or 0,
+        usage.get("estimated_total_tokens") if usage else "n/a",
     )
 
     session_id = body.session_id

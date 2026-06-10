@@ -147,9 +147,18 @@ async def upsert_chunks(doc_id: int, agent_id: Optional[int], chunks: list[str])
 
 async def query(text: str, agent_id: Optional[int], top_k: int = 5) -> list[dict]:
     """Query Pinecone for relevant chunks. Searches agent namespace + global."""
-    if not settings.pinecone_api_key:
-        return []
+    results, _latency_ms = await query_with_timing(text, agent_id, top_k=top_k)
+    return results
 
+
+async def query_with_timing(
+    text: str, agent_id: Optional[int], top_k: int = 5
+) -> tuple[list[dict], int]:
+    """Query Pinecone and return (results, latency_ms)."""
+    if not settings.pinecone_api_key:
+        return [], 0
+
+    started = time.monotonic()
     embedding = await embed_text(text)
     index = await asyncio.get_event_loop().run_in_executor(None, _ensure_index)
 
@@ -196,7 +205,8 @@ async def query(text: str, agent_id: Optional[int], top_k: int = 5) -> list[dict
         all_results.extend(hits)
 
     all_results.sort(key=lambda x: x["score"], reverse=True)
-    return all_results[:top_k]
+    latency_ms = int((time.monotonic() - started) * 1000)
+    return all_results[:top_k], latency_ms
 
 
 async def delete_document_vectors(doc_id: int, agent_id: Optional[int]) -> None:

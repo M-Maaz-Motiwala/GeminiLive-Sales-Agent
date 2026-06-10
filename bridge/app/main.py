@@ -70,6 +70,8 @@ from fastapi import FastAPI
 from google import genai
 from google.genai import types
 
+from app.token_meter import SessionTokenUsage, extract_usage_metadata
+
 try:
     from pywebrtc_audio import AudioProcessor as _WebRTCAudioProcessor
     _WEBRTC_APM_AVAILABLE = True
@@ -421,6 +423,9 @@ class CallState:
     # Buffered streaming transcriptions — flushed per turn / on call end
     user_tx_parts: list[str] = field(default_factory=list)
     model_tx_parts: list[str] = field(default_factory=list)
+
+    # Estimated Gemini token usage for pricing (audio in/out + text context)
+    token_usage: SessionTokenUsage = field(default_factory=SessionTokenUsage)
 
 
 
@@ -1084,6 +1089,10 @@ class GeminiLiveBridge:
             logger.exception("Platform /internal/calls/start failed; using fallback config")
             self.state.agent_config = fallback
 
+        active_cfg = self.state.agent_config or {}
+        instruction = active_cfg.get("system_instruction") or SYSTEM_PROMPT
+        self.state.token_usage.add_text_context(instruction)
+
     async def _platform_transcript(self, role: str, text: str) -> None:
         if not self.platform_url or not self.state.platform_session_id or not text.strip():
             return
@@ -1174,6 +1183,7 @@ class GeminiLiveBridge:
                         "gemini_turns": self.state.gemini_turn_completes,
                         "interruptions": self.state.gemini_interruptions,
                     },
+                    "token_usage": self.state.token_usage.to_dict(),
                 },
                 headers=self._platform_headers(),
                 timeout=5.0,
@@ -1217,6 +1227,21 @@ class GeminiLiveBridge:
 
     # --------------------------------------------------------------- Gemini
 
+    async def _send_auto_greeting(self, session) -> None:
+        """Kick the model to speak first. Only marks greeting_sent after success."""
+        if not AUTO_GREETING or self.state.greeting_sent:
+            return
+        self.state.token_usage.add_text_context(AUTO_GREETING)
+        await session.send_client_content(
+            turns=types.Content(
+                role="user",
+                parts=[types.Part(text=AUTO_GREETING)],
+            ),
+            turn_complete=True,
+        )
+        self.state.greeting_sent = True
+        logger.info("AUTO_GREETING sent")
+
     async def _gemini_loop(self) -> None:
         cfg = self.state.agent_config or {}
         model = cfg.get("model") or self.gemini_model
@@ -1242,6 +1267,13 @@ class GeminiLiveBridge:
                         "Gemini Live connected (voice=%s)",
                         cfg.get("voice", self.gemini_voice),
                     )
+
+                    try:
+                        await self._send_auto_greeting(session)
+                    except Exception:
+                        logger.exception(
+                            "AUTO_GREETING failed; will retry after reconnect"
+                        )
 
                     send_task = asyncio.create_task(
                         self._gemini_send_loop(session), name="gemini-send-loop"
@@ -1296,26 +1328,23 @@ class GeminiLiveBridge:
                 continue
             if not audio_chunk:
                 continue
-            if AUTO_GREETING and not self.state.greeting_sent:
-                self.state.greeting_sent = True
-                try:
-                    await session.send_client_content(
-                        turns=types.Content(
-                            role="user",
-                            parts=[types.Part(text=AUTO_GREETING)],
-                        ),
-                        turn_complete=True,
-                    )
-                except Exception:
-                    logger.exception("AUTO_GREETING send failed")
-            await session.send_realtime_input(
-                audio=types.Blob(
-                    data=audio_chunk,
-                    mime_type="audio/pcm;rate=16000",
-                ),
-            )
+            try:
+                await session.send_realtime_input(
+                    audio=types.Blob(
+                        data=audio_chunk,
+                        mime_type="audio/pcm;rate=16000",
+                    ),
+                )
+            except Exception as exc:
+                if self._is_gemini_session_closed(exc):
+                    logger.warning("Gemini send loop: session closed")
+                    raise
+                logger.exception("Gemini send_realtime_input failed")
+                raise
+            chunk_len = len(audio_chunk)
             self.state.gemini_in_chunks += 1
-            self.state.gemini_in_bytes += len(audio_chunk)
+            self.state.gemini_in_bytes += chunk_len
+            self.state.token_usage.add_audio_input(chunk_len, sample_rate_hz=16000)
             self.state.last_user_tx_ts = time.monotonic()
 
     @staticmethod
@@ -1332,6 +1361,10 @@ class GeminiLiveBridge:
         try:
             while not self._stopping.is_set():
                 async for response in session.receive():
+                    self.state.token_usage.merge_api_usage(
+                        extract_usage_metadata(response)
+                    )
+
                     tool_call = getattr(response, "tool_call", None)
                     if tool_call is not None:
                         await self._handle_tool_call(session, tool_call)
@@ -1357,6 +1390,7 @@ class GeminiLiveBridge:
                         if text:
                             logger.info("USER: %s", text)
                             self._buffer_transcript("user", text)
+                            self.state.token_usage.add_text_output(text)
 
                     out_tx = getattr(server_content, "output_transcription", None)
                     if out_tx is not None:
@@ -1364,6 +1398,7 @@ class GeminiLiveBridge:
                         if text:
                             logger.info("GEMINI: %s", text)
                             self._buffer_transcript("model", text)
+                            self.state.token_usage.add_text_output(text)
 
                     if getattr(server_content, "turn_complete", False):
                         self.state.gemini_turn_completes += 1
@@ -1388,6 +1423,7 @@ class GeminiLiveBridge:
                             audio_bytes = audio_bytes.encode()
                         ab = bytes(audio_bytes)
                         self.state.gemini_out_bytes += len(ab)
+                        self.state.token_usage.add_audio_output(len(ab), sample_rate_hz=24000)
                         self.state.last_gemini_audio_ts = time.monotonic()
                         self._enqueue_output_audio(ab)
         except asyncio.CancelledError:
@@ -1410,6 +1446,12 @@ class GeminiLiveBridge:
         responses = await asyncio.gather(
             *[run_one(fc) for fc in tool_call.function_calls]
         )
+        for fr in responses:
+            try:
+                payload = json.dumps(fr.response) if fr.response is not None else ""
+            except (TypeError, ValueError):
+                payload = str(fr.response)
+            self.state.token_usage.add_text_context(payload)
         logger.info("Tool call batch: %s", [r.name for r in responses])
         await session.send_tool_response(function_responses=list(responses))
 

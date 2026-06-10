@@ -18,6 +18,7 @@ from backend.db.models import (
     Session as DBSession,
 )
 from backend.services import summarizer
+from backend.services.session_metrics import merge_session_meta
 from backend.services.session_timeline import merge_message_turns
 
 logger = logging.getLogger(__name__)
@@ -123,9 +124,11 @@ async def process_call_end(session_id: int) -> None:
         messages = [{"role": t["role"], "text": t["text"]} for t in turns]
         if not messages:
             logger.info("Session %d has no messages; skipping post-call processing", session_id)
-            meta = dict(db_session.meta or {})
-            meta["post_call"] = {"status": "skipped", "reason": "no_messages"}
-            db_session.meta = meta
+            await db.refresh(db_session)
+            db_session.meta = merge_session_meta(
+                db_session.meta,
+                {"post_call": {"status": "skipped", "reason": "no_messages"}},
+            )
             await db.commit()
             return
 
@@ -166,7 +169,7 @@ async def process_call_end(session_id: int) -> None:
                     post_meta["lead_id"] = lead_id
 
         post_meta["status"] = "completed" if not post_meta["errors"] else "partial"
-        meta = dict(db_session.meta or {})
-        meta["post_call"] = post_meta
-        db_session.meta = meta
+        # Reload meta so we do not overwrite token_usage / rag_metrics written at call end.
+        await db.refresh(db_session)
+        db_session.meta = merge_session_meta(db_session.meta, {"post_call": post_meta})
         await db.commit()
