@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import time
 from typing import Any, Optional
 
 from backend.db.models import Agent, AgentType
@@ -28,6 +30,10 @@ Engagement during lookups (critical — no dead air):
 
 PRELOAD_QUERY = "company overview services products pricing policies support process agent role"
 
+# Reuse KB preload across outbound dials for the same agent (faster Gemini connect).
+_PRELOAD_CACHE: dict[int, tuple[float, str, dict[str, Any]]] = {}
+PRELOAD_CACHE_TTL_SEC = int(os.getenv("KB_PRELOAD_CACHE_TTL_SEC", "300"))
+
 OUTBOUND_CALL_SUPPLEMENT = """
 ## Outbound call mode
 You placed this call — the prospect did not dial in.
@@ -45,6 +51,13 @@ async def preload_agent_context(agent: Agent, top_k: int = 5) -> tuple[str, dict
     enabled = list(agent.enabled_tools or [])
     if "search_knowledge_base" not in enabled:
         return "", {"chunks": [], "query": PRELOAD_QUERY, "skipped": "kb_tool_disabled"}
+
+    if PRELOAD_CACHE_TTL_SEC > 0:
+        cached = _PRELOAD_CACHE.get(agent.id)
+        if cached and (time.time() - cached[0]) < PRELOAD_CACHE_TTL_SEC:
+            block, meta = cached[1], dict(cached[2])
+            meta["cache_hit"] = True
+            return block, meta
 
     try:
         from backend.services import rag_service
@@ -79,12 +92,15 @@ async def preload_agent_context(agent: Agent, top_k: int = 5) -> tuple[str, dict
         rag_eval = compute_query_metrics(
             query, results, latency_ms=latency_ms, top_k=top_k, source="preload"
         )
-        return block, {
+        meta = {
             "chunks": chunks_meta,
             "query": query,
             "latency_ms": latency_ms,
             "metrics": rag_eval,
         }
+        if PRELOAD_CACHE_TTL_SEC > 0 and block:
+            _PRELOAD_CACHE[agent.id] = (time.time(), block, meta)
+        return block, meta
     except Exception as exc:
         logger.warning("KB preload failed for agent %s: %s", agent.slug, exc)
         return "", {"chunks": [], "query": PRELOAD_QUERY, "error": str(exc)}

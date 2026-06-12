@@ -365,6 +365,10 @@ class CallState:
     apm_frames: int = 0
 
     active: bool = False
+    cleaning_up: bool = False
+    platform_end_sent: bool = False
+    last_rtp_in_count: int = 0
+    rtp_stall_since: float = 0.0
 
     # ---- Diagnostic counters (reset per call) ----
     rtp_in_frames: int = 0
@@ -593,6 +597,54 @@ class GeminiLiveBridge:
             for call in list(self._calls.values()):
                 state = call.state
                 now = time.monotonic()
+
+                if state.rtp_in_frames > 0 and state.rtp_in_frames == state.last_rtp_in_count:
+                    if not state.rtp_stall_since:
+                        state.rtp_stall_since = now
+                else:
+                    state.rtp_stall_since = 0.0
+                    state.last_rtp_in_count = state.rtp_in_frames
+
+                stall_sec = (
+                    (now - state.rtp_stall_since) if state.rtp_stall_since else 0.0
+                )
+                if (
+                    state.rtp_stall_since
+                    and stall_sec >= 15.0
+                    and state.rtp_in_frames > 30
+                    and call.state.human_channel_id
+                ):
+                    # Outbound ARI channels often stay "Up" after the prospect
+                    # hangs up (no StasisEnd). Inbound usually gets StasisEnd.
+                    if state.call_direction == "outbound":
+                        logger.warning(
+                            "Cleaning up outbound call %s (RTP stalled %.0fs)",
+                            call.state.human_channel_id,
+                            stall_sec,
+                        )
+                        await self.cleanup_call(call)
+                        continue
+                    if self.http is not None:
+                        try:
+                            resp = await self.http.get(
+                                f"/channels/{call.state.human_channel_id}"
+                            )
+                            if resp.status_code == 404:
+                                logger.warning(
+                                    "Cleaning up stale inbound call %s "
+                                    "(channel gone, RTP stalled %.0fs)",
+                                    call.state.human_channel_id,
+                                    stall_sec,
+                                )
+                                await self.cleanup_call(call)
+                                continue
+                        except Exception:
+                            logger.warning(
+                                "Stale call liveness check failed for %s",
+                                call.state.human_channel_id,
+                                exc_info=True,
+                            )
+
                 since_user = (
                     f"{now - state.last_user_tx_ts:.1f}s"
                     if state.last_user_tx_ts
@@ -756,6 +808,12 @@ class GeminiLiveBridge:
                             await self._handle_stasis_start(event)
                         elif etype == "StasisEnd":
                             await self._handle_stasis_end(event)
+                        elif etype == "ChannelDestroyed":
+                            await self._handle_channel_destroyed(event)
+                        elif etype == "ChannelHangupRequest":
+                            await self._handle_channel_hangup_request(event)
+                        elif etype == "ChannelLeftBridge":
+                            await self._handle_channel_left_bridge(event)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -1037,25 +1095,103 @@ class GeminiLiveBridge:
             call.state.asterisk_rtp_addr[1],
         )
 
+    def _find_call_for_channel(self, channel_id: str) -> Optional[CallSession]:
+        call = self._calls.get(channel_id)
+        if call is not None:
+            return call
+        for active in self._calls.values():
+            if active.state.external_channel_id == channel_id:
+                return active
+        return None
+
     async def _handle_stasis_end(self, event: dict) -> None:
         channel_id = event["channel"]["id"]
-        call = self._calls.get(channel_id)
+        call = self._find_call_for_channel(channel_id)
         if call is None:
-            for active in self._calls.values():
-                if active.state.external_channel_id == channel_id:
-                    logger.info("External media channel ended: %s", channel_id)
-                    return
             return
 
+        if channel_id == call.human_channel_id:
+            logger.info(
+                "Human channel ended: %s (cause=%s %s)",
+                channel_id,
+                event.get("channel", {}).get("cause", "?"),
+                event.get("channel", {}).get("cause_txt", ""),
+            )
+        else:
+            logger.info(
+                "External media channel ended: %s (call human=%s)",
+                channel_id,
+                call.human_channel_id,
+            )
+        await self.cleanup_call(call)
+
+    async def _handle_channel_destroyed(self, event: dict) -> None:
+        channel = event.get("channel") or {}
+        channel_id = channel.get("id")
+        if not channel_id:
+            return
+        call = self._find_call_for_channel(channel_id)
+        if call is None:
+            return
+        if channel_id != call.human_channel_id:
+            logger.info(
+                "External media channel destroyed: %s (human=%s) — ignoring",
+                channel_id,
+                call.human_channel_id,
+            )
+            return
         logger.info(
-            "Human channel ended: %s (cause=%s %s)",
+            "ChannelDestroyed: %s (cause=%s %s) — cleaning up call",
             channel_id,
-            event.get("channel", {}).get("cause", "?"),
-            event.get("channel", {}).get("cause_txt", ""),
+            channel.get("cause", "?"),
+            channel.get("cause_txt", ""),
         )
         await self.cleanup_call(call)
 
+    async def _handle_channel_hangup_request(self, event: dict) -> None:
+        channel = event.get("channel") or {}
+        channel_id = channel.get("id")
+        if not channel_id:
+            return
+        call = self._find_call_for_channel(channel_id)
+        if call is None:
+            return
+        if channel_id != call.human_channel_id:
+            logger.info(
+                "External media hangup request: %s (human=%s) — ignoring",
+                channel_id,
+                call.human_channel_id,
+            )
+            return
+        logger.info(
+            "ChannelHangupRequest: %s (cause=%s %s)",
+            channel_id,
+            channel.get("cause", "?"),
+            channel.get("cause_txt", ""),
+        )
+        await self.cleanup_call(call)
+
+    async def _handle_channel_left_bridge(self, event: dict) -> None:
+        channel = event.get("channel") or {}
+        channel_id = channel.get("id")
+        if not channel_id:
+            return
+        call = self._find_call_for_channel(channel_id)
+        if call is None:
+            return
+        if channel_id == call.human_channel_id:
+            logger.info(
+                "Human channel left bridge: %s — cleaning up call",
+                channel_id,
+            )
+            await self.cleanup_call(call)
+
     async def cleanup_call(self, call: CallSession) -> None:
+        if call.state.cleaning_up:
+            return
+        call.state.cleaning_up = True
+        call.state.active = False
+
         # Flush any buffered transcript before ending the platform session.
         await self._flush_all_transcripts(call)
         # Notify platform while session metadata is still attached.
@@ -1083,6 +1219,14 @@ class GeminiLiveBridge:
         call.session = None
 
         if self.http is not None:
+            try:
+                if call.state.human_channel_id:
+                    hid = call.state.human_channel_id
+                    await self.http.post(f"/channels/{hid}/hangup")
+                    await self.http.delete(f"/channels/{hid}")
+            except Exception:
+                pass
+
             try:
                 if call.state.external_channel_id:
                     await self.http.delete(f"/channels/{call.state.external_channel_id}")
@@ -1312,32 +1456,50 @@ class GeminiLiveBridge:
             return {"id": call_id, "name": tool_name, "response": {"error": str(exc)}}
 
     async def _platform_call_end(self, call: CallSession) -> None:
+        if call.state.platform_end_sent:
+            return
         if not self.platform_url or not call.state.platform_session_id:
             return
         duration = None
         if call.state.call_started_at:
             duration = time.monotonic() - call.state.call_started_at
-        try:
-            assert self.http is not None
-            await self.http.post(
-                f"{self.platform_url}/internal/calls/end",
-                json={
-                    "session_id": call.state.platform_session_id,
-                    "channel_id": call.state.human_channel_id,
-                    "duration_sec": duration,
-                    "stats": {
-                        "rtp_in": call.state.rtp_in_frames,
-                        "rtp_out": call.state.rtp_out_frames,
-                        "gemini_turns": call.state.gemini_turn_completes,
-                        "interruptions": call.state.gemini_interruptions,
-                    },
-                    "token_usage": call.state.token_usage.to_dict(),
-                },
-                headers=self._platform_headers(),
-                timeout=5.0,
-            )
-        except Exception:
-            logger.warning("Failed to notify platform of call end", exc_info=True)
+        payload = {
+            "session_id": call.state.platform_session_id,
+            "channel_id": call.state.human_channel_id,
+            "duration_sec": duration,
+            "stats": {
+                "rtp_in": call.state.rtp_in_frames,
+                "rtp_out": call.state.rtp_out_frames,
+                "gemini_turns": call.state.gemini_turn_completes,
+                "interruptions": call.state.gemini_interruptions,
+            },
+            "token_usage": call.state.token_usage.to_dict(),
+        }
+        for attempt in range(2):
+            try:
+                assert self.http is not None
+                await self.http.post(
+                    f"{self.platform_url}/internal/calls/end",
+                    json=payload,
+                    headers=self._platform_headers(),
+                    timeout=10.0,
+                )
+                call.state.platform_end_sent = True
+                return
+            except Exception:
+                if attempt == 0:
+                    logger.warning(
+                        "Platform call end failed (retrying) session=%s",
+                        call.state.platform_session_id,
+                        exc_info=True,
+                    )
+                    await asyncio.sleep(0.5)
+                else:
+                    logger.warning(
+                        "Failed to notify platform of call end session=%s",
+                        call.state.platform_session_id,
+                        exc_info=True,
+                    )
 
     def _build_live_config(self, cfg: dict) -> types.LiveConnectConfig:
         gemini_tools: list[types.Tool] = []
@@ -1928,18 +2090,29 @@ async def health():
 
 @app.get("/internal/status")
 async def internal_status(_: None = Depends(_verify_bridge_token)):
-    return {
-        "active_calls": len(bridge._calls),
-        "max_concurrent": bridge.max_concurrent_calls,
-        "free_ports": len(bridge._free_ports),
-        "calls": [
+    now = time.monotonic()
+    call_rows = []
+    for call in bridge._calls.values():
+        state = call.state
+        stall_sec = (
+            (now - state.rtp_stall_since) if state.rtp_stall_since else 0.0
+        )
+        call_rows.append(
             {
                 "channel_id": call.human_channel_id,
                 "rtp_port": call.rtp_port,
                 "session_ready": call.session_ready.is_set(),
-                "bridge_id": call.state.bridge_id,
-                "external_channel_id": call.state.external_channel_id,
+                "bridge_id": state.bridge_id,
+                "external_channel_id": state.external_channel_id,
+                "platform_session_id": state.platform_session_id,
+                "direction": state.call_direction,
+                "rtp_in_frames": state.rtp_in_frames,
+                "rtp_stall_sec": round(stall_sec, 1),
             }
-            for call in bridge._calls.values()
-        ],
+        )
+    return {
+        "active_calls": len(bridge._calls),
+        "max_concurrent": bridge.max_concurrent_calls,
+        "free_ports": len(bridge._free_ports),
+        "calls": call_rows,
     }

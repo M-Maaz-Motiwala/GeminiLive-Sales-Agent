@@ -12,7 +12,21 @@ from backend.db.models import Agent, Persona, AgentType, User, Document
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
-RESERVED_EXTENSIONS = {"600", "700", "1000", "1001"}
+RESERVED_EXTENSIONS = {
+    "600",
+    "700",
+    "1000",
+    "1001",
+    "1002",
+    "1003",
+    "1004",
+    "1005",
+    "1006",
+    "1007",
+    "1008",
+    "1009",
+    "1010",
+}
 
 
 class PersonaIn(BaseModel):

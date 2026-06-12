@@ -1,82 +1,89 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/src/auth/AuthContext';
-import { Megaphone, PhoneOutgoing, Plus } from 'lucide-react';
-import { apiFetch, apiFetchList } from '@/src/lib/api';
-import { fetchOutboundAgents } from '@/src/lib/outbound';
+import { Megaphone, PhoneOutgoing, Plus, Upload, ChevronRight } from 'lucide-react';
 import { PageHeader, GlassCard, BtnPrimary, BtnGhost, Badge } from '@/src/components/admin/theme';
+import { fetchOutboundAgents } from '@/src/lib/outbound';
+import {
+  createCampaign,
+  fetchCampaigns,
+  importCampaignCsv,
+  statusBadgeVariant,
+  type Campaign,
+} from '@/src/lib/campaigns';
 
 const selectCls =
   'w-full rounded-xl border border-white/10 bg-black/40 px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-violet-500/50';
 
 export default function Campaigns() {
   const { token } = useAuth();
-  const [campaigns, setCampaigns] = useState<any[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [agents, setAgents] = useState<any[]>([]);
-  const [leads, setLeads] = useState<any[]>([]);
-  const [name, setName] = useState('Lab dual-phone demo');
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
   const [agentId, setAgentId] = useState<number | ''>('');
-  const [endpoints, setEndpoints] = useState('PJSIP/1001\nPJSIP/1002');
+  const [endpoints, setEndpoints] = useState('');
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const csvRef = useRef<HTMLInputElement>(null);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  const load = () => {
-    apiFetchList('/api/campaigns', token).then(setCampaigns);
+  const load = () => fetchCampaigns(token).then(setCampaigns);
+
+  useEffect(() => {
+    if (!token) return;
+    load();
     fetchOutboundAgents(token).then(a => {
       setAgents(a);
       if (a.length && agentId === '') setAgentId(a[0].id);
     });
-    apiFetchList('/api/leads', token).then(setLeads);
-  };
-
-  useEffect(() => { if (token) load(); }, [token]);
+  }, [token]);
 
   const create = async () => {
     setErr('');
     setMsg('');
     if (!agentId || !name.trim()) {
-      setErr('Name and agent required');
+      setErr('Name and agent are required');
       return;
     }
-    const eps = endpoints.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+    setBusy(true);
     try {
-      await apiFetch('/api/campaigns', token, {
-        method: 'POST',
-        body: JSON.stringify({
-          name: name.trim(),
-          agent_id: agentId,
-          description: 'Phase 2a lab campaign',
-          endpoints: eps,
-        }),
+      const eps = endpoints.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+      const campaign = await createCampaign(token, {
+        name: name.trim(),
+        agent_id: agentId as number,
+        description: description.trim() || undefined,
+        endpoints: eps.length ? eps : undefined,
       });
-      setMsg('Campaign created');
+      if (csvFile) {
+        await importCampaignCsv(token, campaign.id, csvFile);
+        setMsg(`Campaign created with CSV import (${campaign.name})`);
+      } else if (!eps.length) {
+        setErr('Add endpoints, paste numbers, or upload a CSV');
+        setBusy(false);
+        return;
+      } else {
+        setMsg('Campaign created');
+      }
+      setName('');
+      setDescription('');
+      setEndpoints('');
+      setCsvFile(null);
+      if (csvRef.current) csvRef.current.value = '';
       load();
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Create failed');
-    }
-  };
-
-  const dialCampaign = async (id: number, parallel = 2) => {
-    setErr('');
-    setMsg('');
-    try {
-      const res = await apiFetch<{ dialed: number; results: any[] }>(
-        `/api/campaigns/${id}/dial`,
-        token,
-        { method: 'POST', body: JSON.stringify({ max_parallel: parallel }) },
-      );
-      setMsg(`Dialed ${res.results?.length ?? 0} target(s) — check phones 1001 & 1002`);
-      load();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Dial failed');
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
-    <div className="p-6 lg:p-8 max-w-4xl">
+    <div className="p-6 lg:p-8 max-w-5xl">
       <PageHeader
         title="Campaigns"
-        subtitle="Batch outbound — lab demo with 1001 + 1002, trunk-ready when DID arrives"
+        subtitle="Batch outbound with progress tracking, CSV import, and rolling parallel dials"
         action={
           <Link to="/admin/outbound">
             <BtnGhost><PhoneOutgoing className="w-4 h-4" /> Quick dial</BtnGhost>
@@ -84,49 +91,85 @@ export default function Campaigns() {
         }
       />
 
-      <GlassCard className="p-6 mb-6 space-y-4">
+      <GlassCard className="p-6 mb-8 space-y-4">
         <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-          <Plus className="w-4 h-4 text-violet-400" /> New lab campaign
+          <Plus className="w-4 h-4 text-violet-400" /> New campaign
         </h2>
         <input className={selectCls} placeholder="Campaign name" value={name} onChange={e => setName(e.target.value)} />
+        <textarea
+          className={`${selectCls} min-h-[72px]`}
+          placeholder="Description — goal, audience, notes for your team…"
+          value={description}
+          onChange={e => setDescription(e.target.value)}
+        />
         <select className={selectCls} value={agentId} onChange={e => setAgentId(Number(e.target.value))}>
           {agents.map(a => (
             <option key={a.id} value={a.id}>{a.name}</option>
           ))}
         </select>
-        <textarea
-          className={`${selectCls} font-mono text-xs min-h-[80px]`}
-          value={endpoints}
-          onChange={e => setEndpoints(e.target.value)}
-          placeholder="PJSIP/1001&#10;PJSIP/1002"
-        />
-        <p className="text-[10px] text-zinc-600">One endpoint per line — register Zoiper as 1001 and 1002 on same Wi‑Fi.</p>
-        <BtnPrimary onClick={create}>Create campaign</BtnPrimary>
+
+        <div>
+          <label className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5 block">
+            Targets (one per line)
+          </label>
+          <textarea
+            className={`${selectCls} font-mono text-xs min-h-[80px]`}
+            value={endpoints}
+            onChange={e => setEndpoints(e.target.value)}
+            placeholder={'1001\n1002\nPJSIP/1003\nor +15551234567 (trunk mode)'}
+          />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <input
+            ref={csvRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={e => setCsvFile(e.target.files?.[0] ?? null)}
+          />
+          <BtnGhost type="button" onClick={() => csvRef.current?.click()}>
+            <Upload className="w-4 h-4" />
+            {csvFile ? csvFile.name : 'Upload CSV'}
+          </BtnGhost>
+          <span className="text-[10px] text-zinc-600">
+            CSV columns: phone, name, email, company, endpoint
+          </span>
+        </div>
+
+        <BtnPrimary onClick={create} disabled={busy}>
+          {busy ? 'Creating…' : 'Create campaign'}
+        </BtnPrimary>
         {err && <p className="text-sm text-red-400">{err}</p>}
         {msg && <p className="text-sm text-emerald-400">{msg}</p>}
       </GlassCard>
 
       <div className="space-y-3">
         {campaigns.map(c => (
-          <GlassCard key={c.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <Megaphone className="w-4 h-4 text-orange-400" />
-                <span className="font-medium text-white">{c.name}</span>
-                <Badge variant="default">{c.status}</Badge>
+          <Link key={c.id} to={`/admin/campaigns/${c.id}`}>
+            <GlassCard className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-violet-500/30 transition-colors cursor-pointer">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Megaphone className="w-4 h-4 text-orange-400 shrink-0" />
+                  <span className="font-medium text-white truncate">{c.name}</span>
+                  <Badge variant={statusBadgeVariant(c.status)}>{c.status}</Badge>
+                </div>
+                {c.description && (
+                  <p className="text-xs text-zinc-500 mt-1 line-clamp-2">{c.description}</p>
+                )}
+                <p className="text-xs text-zinc-600 mt-1">
+                  {c.lead_count} targets
+                  {c.progress && (
+                    <> · {c.progress.percent_done}% done · {c.progress.pending} left</>
+                  )}
+                </p>
               </div>
-              <p className="text-xs text-zinc-500 mt-1">{c.lead_count} targets · agent #{c.agent_id}</p>
-            </div>
-            <BtnPrimary
-              className="bg-gradient-to-r from-orange-600 to-amber-600 shrink-0"
-              onClick={() => dialCampaign(c.id, 2)}
-            >
-              Dial all (2 parallel)
-            </BtnPrimary>
-          </GlassCard>
+              <ChevronRight className="w-5 h-5 text-zinc-600 shrink-0" />
+            </GlassCard>
+          </Link>
         ))}
         {campaigns.length === 0 && (
-          <p className="text-sm text-zinc-600">No campaigns yet. Create one above for dual-phone demo.</p>
+          <p className="text-sm text-zinc-600">No campaigns yet. Create one above.</p>
         )}
       </div>
     </div>

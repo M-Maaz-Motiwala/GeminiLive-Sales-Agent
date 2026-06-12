@@ -7,8 +7,9 @@ if [ -f /run/host.env ]; then
   . /run/host.env
 fi
 
-SIP_PASS_1001="${SIP_PASS_1001:-1001pass}"
-SIP_PASS_1002="${SIP_PASS_1002:-1002pass}"
+for ext in 1001 1002 1003 1004 1005 1006 1007 1008 1009 1010; do
+  eval "SIP_PASS_${ext}=\${SIP_PASS_${ext}:-${ext}pass}"
+done
 
 if [ -n "${EXTERNAL_IP}" ]; then
   PJSIP_NAT="external_media_address=${EXTERNAL_IP}
@@ -30,8 +31,13 @@ awk -v pjsip="$PJSIP_NAT" -v rtp="$RTP_NAT" -v media="$MEDIA_LINE" '
   { print }
 ' /templates/pjsip.conf.template > /etc/asterisk/pjsip.conf
 
-sed -i "s|@SIP_PASS_1001@|${SIP_PASS_1001}|g; s|@SIP_PASS_1002@|${SIP_PASS_1002}|g" \
-  /etc/asterisk/pjsip.conf
+SED_PASS=""
+for ext in 1001 1002 1003 1004 1005 1006 1007 1008 1009 1010; do
+  eval "pass=\$SIP_PASS_${ext}"
+  SED_PASS="${SED_PASS}s|@SIP_PASS_${ext}@|${pass}|g; "
+done
+# shellcheck disable=SC2086
+sed -i "${SED_PASS}" /etc/asterisk/pjsip.conf
 
 awk -v rtp="$RTP_NAT" '
   /@EXTERNADDR_LINE@/ { print rtp; next }
@@ -39,5 +45,6 @@ awk -v rtp="$RTP_NAT" '
 ' /templates/rtp.conf.template > /etc/asterisk/rtp.conf
 
 echo "asterisk-entrypoint: EXTERNAL_IP=${EXTERNAL_IP:-<unset>}"
-echo "asterisk-entrypoint: SIP extensions 1000, 1001 (${SIP_PASS_1001:+set}), 1002 (${SIP_PASS_1002:+set})"
+echo "asterisk-entrypoint: SIP extensions 1000, 1001–1010 (lab prospects)"
+
 exec /usr/local/bin/entrypoint.sh "$@"

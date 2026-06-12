@@ -135,7 +135,7 @@ LAN IP is auto-detected into **`.host.env`** on each **`./start.sh`** (set `EXTE
 | `EXTERNAL_IP` | `auto` (default) or fixed IPv4 e.g. `172.17.1.130` |
 | `SIP_PORT` | SIP UDP port (default `5060`) |
 | `SIP_USER` / `SIP_PASS` | Extension 1000 credentials |
-| `SIP_USER_1001` / `SIP_PASS_1001` | Extension 1001 credentials |
+| `SIP_USER_100x` / `SIP_PASS_100x` | Lab prospect phones 1001–1010 (default `{ext}pass`) |
 | `SIP_CODEC` | `PCMU` (G.711 μ-law) recommended |
 
 ---
@@ -186,11 +186,26 @@ Admin → Outbound / Campaigns
 ### Lab setup (single or dual phone)
 
 1. Register softphones on same Wi‑Fi (`EXTERNAL_IP`):
-   - **1001** / **1002** — prospect phones (`SIP_PASS_1001`, `SIP_PASS_1002`)
-2. **Outbound Calls** → Riley → **Dial now** (one phone) or **Dial 1001 + 1002** (simultaneous)
-3. **Campaigns** → create lab campaign with `PJSIP/1001` + `PJSIP/1002` → **Dial all**
+   - **1001–1010** — prospect phones (default password `{ext}pass`, override via `SIP_PASS_100x` in `.env`)
+2. **Outbound Calls** → Riley → **Dial now** (one phone) or batch dial multiple extensions
+3. **Campaigns** → one `PJSIP/100x` per line (e.g. `PJSIP/1001` … `PJSIP/1010`) → **Dial all**
 4. Optional: **Leads** → **Call** (CRM context + DNC / call-window checks)
 5. Review **Sessions** — OUTBOUND badge, `call_disposition`, leads
+
+### Lab softphones (1001–1010)
+
+Extensions **1001 through 1010** are preconfigured in Asterisk. After `./start.sh up -d --force-recreate asterisk`, register each phone in Zoiper:
+
+| Field | Value |
+| ----- | ----- |
+| Username | `1003` (or any 1001–1010) |
+| Password | `{ext}pass` (e.g. `1003pass`) — override in `.env` via `SIP_PASS_1003` |
+| Server | `EXTERNAL_IP` from Dashboard |
+| Port | `5060` UDP |
+
+Dial from CRM with `PJSIP/1003`, batch endpoints, or campaigns (one `PJSIP/100x` per line).
+
+To add **1011+**, copy the 1010 block in `asterisk/pjsip.conf.template` and `extensions.conf`, add `SIP_PASS_1011` to `.env`, and extend the loop in `asterisk/entrypoint-wrap.sh`.
 
 ### Trunk mode (when ready)
 
@@ -237,7 +252,7 @@ AMD and large-scale dialer queues are **Phase 2c+**.
 | ---- | ------- |
 | Dashboard | Getting started + SIP IP |
 | Agents | Extensions, prompts, tools (inbound + outbound_sales) |
-| Outbound Calls | Dial / batch dial (1001+1002) |
+| Outbound Calls | Dial / batch dial (1001–1010) |
 | Campaigns | Batch campaigns, parallel lab demo |
 | Documents | Upload KB files per agent |
 | Sessions | Transcripts + auto summaries (inbound + outbound) |

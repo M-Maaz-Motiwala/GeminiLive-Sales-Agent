@@ -16,6 +16,7 @@ from backend.db.models import Agent, AgentType, Lead
 from backend.services.bridge_client import bridge_status
 from backend.services.outbound_dialer import dial_one
 from backend.services.outbound_policy import within_call_window
+from backend.services.session_reconcile import reconcile_stale_bridge_sessions
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -43,8 +44,12 @@ class BatchDialIn(BaseModel):
 
 
 @router.get("/status")
-async def outbound_status(_=Depends(get_current_user)):
+async def outbound_status(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
     """Bridge capacity + outbound mode (for CRM dashboard)."""
+    await reconcile_stale_bridge_sessions(db)
     try:
         bridge = await bridge_status()
     except Exception as exc:

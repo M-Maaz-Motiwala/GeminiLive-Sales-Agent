@@ -66,6 +66,8 @@ export default function Outbound() {
 
   useEffect(() => {
     load();
+    const poll = setInterval(load, 5000);
+    return () => clearInterval(poll);
   }, [token, searchParams]);
 
   const dial = async () => {
@@ -137,9 +139,8 @@ export default function Outbound() {
               {[
                 ['SIP server', sipServer],
                 ['Port', `${info?.sip_port || 5060} UDP`],
-                ['Username', sipUser1001],
-                ['Password', sipPass1001],
                 ['Codec', info?.sip_codec_label || 'G.711 μ-law'],
+                ['Password rule', '{ext}pass (e.g. 1003pass)'],
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-2 p-2 rounded-lg bg-black/30 border border-white/5">
                   <dt className="text-zinc-500 text-xs">{k}</dt>
@@ -147,8 +148,36 @@ export default function Outbound() {
                 </div>
               ))}
             </dl>
+            <div className="overflow-x-auto rounded-lg border border-white/10">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-white/10 bg-white/[0.02]">
+                    <th className="p-2 text-left text-zinc-500">Ext</th>
+                    <th className="p-2 text-left text-zinc-500">Username</th>
+                    <th className="p-2 text-left text-zinc-500">Password</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(info?.lab_extensions as { extension: string; username: string; password: string }[] | undefined)?.map(
+                    row => (
+                      <tr key={row.extension} className="border-b border-white/5 last:border-0">
+                        <td className="p-2 font-mono text-white">{row.extension}</td>
+                        <td className="p-2 font-mono text-orange-300/90">{row.username}</td>
+                        <td className="p-2 font-mono text-zinc-400">{row.password}</td>
+                      </tr>
+                    ),
+                  ) ?? (
+                    <tr>
+                      <td className="p-2 font-mono text-white">1001</td>
+                      <td className="p-2 font-mono text-orange-300/90">{sipUser1001}</td>
+                      <td className="p-2 font-mono text-zinc-400">{sipPass1001}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
             <p className="text-[10px] text-zinc-600 flex items-center gap-1">
-              <Wifi className="w-3 h-3" /> Phone and laptop must be on the same Wi‑Fi. Status must show Registered before dialing.
+              <Wifi className="w-3 h-3" /> One Zoiper account per phone. Same Wi‑Fi as this PC — use SIP server above, not 127.0.0.1. Wait for Registered.
             </p>
           </GlassCard>
 

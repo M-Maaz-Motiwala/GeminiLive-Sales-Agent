@@ -57,11 +57,25 @@ export default function Sessions() {
                         {(s.meta?.direction === 'outbound' || s.channel_type === 'outbound') && (
                           <span className="text-[10px] px-2 py-0.5 rounded-full bg-orange-500/15 text-orange-300">OUTBOUND</span>
                         )}
+                        {s.campaign_name && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 truncate max-w-[140px]" title={s.campaign_name}>
+                            {s.campaign_name}
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-zinc-500 mt-1 truncate">
-                        {s.channel_type?.toUpperCase()}
-                        {s.caller_id && <> · {s.caller_id}</>}
-                        {s.meta?.dialed_extension && <> · ext {s.meta.dialed_extension}</>}
+                        {s.contact_number ? (
+                          <span className="text-zinc-300">
+                            {s.contact_label || (s.meta?.direction === 'outbound' || s.channel_type === 'outbound' ? 'Called' : 'From')}{' '}
+                            <span className="font-mono">{s.contact_number}</span>
+                          </span>
+                        ) : (
+                          <>
+                            {s.channel_type?.toUpperCase()}
+                            {s.caller_id && <> · {s.caller_id}</>}
+                            {s.meta?.dialed_extension && <> · ext {s.meta.dialed_extension}</>}
+                          </>
+                        )}
                         {duration != null && <> · {Math.round(duration)}s</>}
                       </div>
                       {s.summary ? (

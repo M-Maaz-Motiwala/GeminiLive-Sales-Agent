@@ -136,8 +136,12 @@ services:
       - ./asterisk/extensions.conf:/etc/asterisk/extensions.conf:ro
       - ./asterisk/logger.conf:/etc/asterisk/logger.conf:ro
     ports:
-      - "5060:5060/udp"
       - "8088:8088"
+      # host mode on SIP preserves the phone's real source IP in REGISTER (not 172.19.0.1).
+      - target: 5060
+        published: 5060
+        protocol: udp
+        mode: host
       - "10000-10050:10000-10050/udp"
     networks:
       - voip
@@ -156,6 +160,7 @@ services:
     container_name: gemini_bridge
     env_file:
       - .env
+      - .host.env
     environment:
       PLATFORM_URL: http://platform:8000
       MAX_CONCURRENT_CALLS: ${MAX_CONCURRENT_CALLS:-5}

@@ -25,6 +25,7 @@ async def dial_one(
     lead_id: Optional[int] = None,
     endpoint: Optional[str] = None,
     caller_id: Optional[str] = None,
+    campaign_lead_id: Optional[int] = None,
 ) -> dict[str, Any]:
     if agent.type != AgentType.outbound_sales:
         raise ValueError("Agent is not outbound_sales")
@@ -46,6 +47,7 @@ async def dial_one(
         endpoint=ep,
         lead_id=lead_id or (lead.id if lead else None),
         caller_id=cid,
+        campaign_lead_id=campaign_lead_id,
     )
 
     if lead and lead.phone:

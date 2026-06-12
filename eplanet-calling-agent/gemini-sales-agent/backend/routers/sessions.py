@@ -11,6 +11,7 @@ from backend.db.database import get_db
 from backend.db.models import Session as DBSession, Message, ToolCall, Output, OutputType, Note, SessionStatus
 from backend.services import summarizer
 from backend.services.post_call import process_call_end
+from backend.services.session_reconcile import reconcile_stale_bridge_sessions
 from backend.services.session_timeline import build_timeline, merge_message_turns
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -43,6 +44,7 @@ async def list_sessions(
         q = q.where(DBSession.status == status)
     if agent_id:
         q = q.where(DBSession.agent_id == agent_id)
+    await reconcile_stale_bridge_sessions(db)
     result = await db.execute(q)
     rows = []
     for s in result.scalars().all():

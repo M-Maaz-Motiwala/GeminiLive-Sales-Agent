@@ -32,6 +32,17 @@ async def system_info() -> dict:
     if ip_mode not in ("auto", "fixed"):
         ip_mode = "auto"
 
+    lab_extensions = []
+    for ext in range(1001, 1011):
+        ext_s = str(ext)
+        lab_extensions.append(
+            {
+                "extension": ext_s,
+                "username": os.getenv(f"SIP_USER_{ext_s}", ext_s),
+                "password": os.getenv(f"SIP_PASS_{ext_s}", f"{ext_s}pass"),
+            }
+        )
+
     return {
         "sip_server": sip_ip,
         "external_ip": sip_ip,
@@ -48,6 +59,7 @@ async def system_info() -> dict:
         "sip_pass_1001": os.getenv("SIP_PASS_1001", "1001pass"),
         "sip_user_1002": os.getenv("SIP_USER_1002", "1002"),
         "sip_pass_1002": os.getenv("SIP_PASS_1002", "1002pass"),
+        "lab_extensions": lab_extensions,
         "outbound_mode": os.getenv("OUTBOUND_MODE", "lab"),
         "default_admin_email": os.getenv("ADMIN_EMAIL", "admin@aura.ai"),
         "outbound_lab_endpoint": os.getenv("OUTBOUND_LAB_ENDPOINT", "PJSIP/1001"),

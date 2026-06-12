@@ -25,6 +25,7 @@ class CallSession:
         default_factory=lambda: asyncio.Queue(maxsize=1000)
     )
     session_ready: asyncio.Event = field(default_factory=asyncio.Event)
+    human_answered: asyncio.Event = field(default_factory=asyncio.Event)
     call_active: asyncio.Event = field(default_factory=asyncio.Event)
     gemini_task: Optional[asyncio.Task] = None
     pacer_task: Optional[asyncio.Task] = None

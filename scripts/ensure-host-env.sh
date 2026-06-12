@@ -106,10 +106,17 @@ fi
 SIP_PORT=$(read_env SIP_PORT "5060")
 SIP_USER=$(read_env SIP_USER "1000")
 SIP_PASS=$(read_env SIP_PASS "1000pass")
-SIP_USER_1001=$(read_env SIP_USER_1001 "1001")
-SIP_PASS_1001=$(read_env SIP_PASS_1001 "1001pass")
-SIP_USER_1002=$(read_env SIP_USER_1002 "1002")
-SIP_PASS_1002=$(read_env SIP_PASS_1002 "1002pass")
+LAB_EXTS=(1001 1002 1003 1004 1005 1006 1007 1008 1009 1010)
+LAB_ENV_BLOCK=""
+for ext in "${LAB_EXTS[@]}"; do
+  uvar="SIP_USER_${ext}"
+  pvar="SIP_PASS_${ext}"
+  declare "${uvar}=$(read_env "${uvar}" "${ext}")"
+  declare "${pvar}=$(read_env "${pvar}" "${ext}pass")"
+  LAB_ENV_BLOCK+="SIP_USER_${ext}=${!uvar}
+SIP_PASS_${ext}=${!pvar}
+"
+done
 SIP_CODEC=$(read_env SIP_CODEC "PCMU")
 
 IP_CHANGED=0
@@ -128,11 +135,7 @@ IP_CHANGED=${IP_CHANGED}
 SIP_PORT=${SIP_PORT}
 SIP_USER=${SIP_USER}
 SIP_PASS=${SIP_PASS}
-SIP_USER_1001=${SIP_USER_1001}
-SIP_PASS_1001=${SIP_PASS_1001}
-SIP_USER_1002=${SIP_USER_1002}
-SIP_PASS_1002=${SIP_PASS_1002}
-SIP_CODEC=${SIP_CODEC}
+${LAB_ENV_BLOCK}SIP_CODEC=${SIP_CODEC}
 EOF
 
 echo "Wrote ${HOST_ENV}"

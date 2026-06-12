@@ -15,12 +15,15 @@ from backend.config import get_settings
 from backend.db.database import get_db
 from backend.db.models import (
     Agent,
+    Campaign,
+    CampaignLead,
     ChannelType,
     Lead,
     Message,
     Session as DBSession,
     SessionStatus,
 )
+from backend.services.session_contact import build_call_contact_meta
 from backend.services import tool_executor
 from backend.services.live_config import (
     agent_to_live_config,
@@ -51,6 +54,7 @@ class CallStartIn(BaseModel):
     direction: Literal["inbound", "outbound"] = "inbound"
     lead_id: Optional[int] = None
     dialed_endpoint: Optional[str] = None
+    campaign_lead_id: Optional[int] = None
 
 
 class TranscriptIn(BaseModel):
@@ -130,6 +134,26 @@ async def call_start(
         meta["dialed_endpoint"] = body.dialed_endpoint
     if body.lead_id is not None:
         meta["lead_id"] = body.lead_id
+    if body.campaign_lead_id is not None:
+        meta["campaign_lead_id"] = body.campaign_lead_id
+
+    contact_meta = await build_call_contact_meta(
+        db,
+        direction=direction,
+        caller_id=body.caller_id,
+        dialed_endpoint=body.dialed_endpoint,
+        lead_id=body.lead_id,
+        dialed_extension=body.dialed_extension,
+    )
+    meta.update(contact_meta)
+
+    if body.campaign_lead_id is not None:
+        cl = await db.get(CampaignLead, body.campaign_lead_id)
+        if cl:
+            camp = await db.get(Campaign, cl.campaign_id)
+            if camp:
+                meta["campaign_id"] = camp.id
+                meta["campaign_name"] = camp.name
 
     lead_context = ""
     if body.lead_id is not None:
@@ -183,8 +207,13 @@ async def call_start(
     db_session.meta = meta
     await db.flush()
 
+    if body.campaign_lead_id is not None:
+        cl = await db.get(CampaignLead, body.campaign_lead_id)
+        if cl:
+            cl.session_id = db_session.id
+
     logger.info(
-        "Call started session=%d agent=%s direction=%s ext=%s channel=%s caller=%s lead=%s",
+        "Call started session=%d agent=%s direction=%s ext=%s channel=%s caller=%s lead=%s campaign_lead=%s contact=%s",
         db_session.id,
         agent.slug,
         direction,
@@ -192,6 +221,8 @@ async def call_start(
         body.channel_id,
         body.caller_id,
         body.lead_id,
+        body.campaign_lead_id,
+        meta.get("contact_number"),
     )
     return config
 

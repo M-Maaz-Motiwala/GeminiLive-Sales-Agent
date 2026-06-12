@@ -61,10 +61,11 @@ fi
 
 echo ""
 echo "=== Bridge → Asterisk ARI websocket ==="
-if docker logs gemini_bridge 2>&1 | grep -q "ARI websocket connected"; then
-  ok "bridge connected to ARI (docker logs gemini_bridge)"
+if curl -sf --connect-timeout 2 -u gemini:gemini123 \
+  http://127.0.0.1:8088/ari/applications 2>/dev/null | grep -q '"name": "gemini-agent"'; then
+  ok "bridge connected to ARI (gemini-agent registered)"
 else
-  fail "bridge not connected to ARI yet"
+  fail "bridge not connected to ARI yet — wait a few seconds or: docker restart gemini_bridge"
 fi
 
 echo ""
@@ -86,11 +87,41 @@ fi
 
 echo ""
 echo "=== Asterisk SIP extensions ==="
-for ext in 1000 1001 1002; do
-  if docker exec asterisk asterisk -rx "pjsip show endpoint ${ext}" 2>/dev/null | grep -q "Endpoint:"; then
+# One CLI call — rapid per-extension "asterisk -rx" races the single-threaded CLI and flakes.
+PJSIP_ENDPOINTS=""
+for attempt in 1 2 3; do
+  PJSIP_ENDPOINTS=$(docker exec asterisk asterisk -rx "pjsip show endpoints" 2>/dev/null || true)
+  if echo "$PJSIP_ENDPOINTS" | grep -qE '^ Endpoint:  [0-9]'; then
+    break
+  fi
+  sleep 1
+done
+for ext in 1000 1001 1002 1003 1004 1005 1006 1007 1008 1009 1010; do
+  if echo "$PJSIP_ENDPOINTS" | grep -qE "^ Endpoint:  ${ext}[[:space:]]"; then
     ok "extension ${ext} in pjsip"
   else
     fail "extension ${ext} missing — run: ./start.sh up -d --force-recreate asterisk"
+  fi
+done
+
+echo ""
+echo "=== SIP registrations (lab phones) ==="
+for ext in 1001 1002; do
+  BLOCK=$(echo "$PJSIP_ENDPOINTS" | awk -v e="$ext" '
+    $1 == "Endpoint:" && $2 == e { found=1; next }
+    found && /^ Endpoint:/ { exit }
+    found && /Contact:/ { print; exit }
+  ')
+  if [ -z "$BLOCK" ]; then
+    fail "extension ${ext} not registered — Zoiper SIP server must be ${EXTERNAL_IP:-<host-ip>}:${SIP_PORT:-5060}"
+  elif echo "$BLOCK" | grep -qE '172\.19\.0\.[0-9]+'; then
+    fail "extension ${ext} has Docker contact $(echo "$BLOCK" | awk '{print $2}') — toggle Zoiper reg off/on (SIP server ${EXTERNAL_IP:-<host-ip>}) then: ./start.sh up -d --force-recreate asterisk"
+  elif echo "$BLOCK" | grep -qF "${EXTERNAL_IP:-}"; then
+    ok "extension ${ext} registered $(echo "$BLOCK" | awk '{print $2}')"
+  elif echo "$BLOCK" | grep -q 'Avail'; then
+    ok "extension ${ext} registered $(echo "$BLOCK" | awk '{print $2}')"
+  else
+    fail "extension ${ext} stale contact $(echo "$BLOCK" | awk '{print $2}') — re-register Zoiper to ${EXTERNAL_IP:-<host-ip>}"
   fi
 done
 
@@ -105,8 +136,8 @@ if [ "$ERR" -eq 0 ]; then
   echo ""
   echo "  SIP server:  ${EXTERNAL_IP:-<host-ip>}"
   echo "  Port:        ${SIP_PORT:-5060} UDP"
-  echo "  Username:    ${SIP_USER:-1000} (inbound) · ${SIP_USER_1001:-1001} / ${SIP_USER_1002:-1002} (outbound lab)"
-  echo "  Password:    ${SIP_PASS:-1000pass} · ${SIP_PASS_1001:-1001pass} · ${SIP_PASS_1002:-1002pass}"
+  echo "  Username:    ${SIP_USER:-1000} (inbound) · 1001–1010 (outbound lab prospects)"
+  echo "  Password:    ${SIP_PASS:-1000pass} · {ext}pass for 1001–1010 (override via SIP_PASS_100x in .env)"
   echo "  Codec:       ${SIP_CODEC:-PCMU} (G.711 μ-law)"
   echo ""
   echo "  IP changed?   ./scripts/refresh-ip.sh"
