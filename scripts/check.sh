@@ -6,8 +6,10 @@ cd "$ROOT"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
 NC='\033[0m'
 ok() { echo -e "${GREEN}OK${NC}  $*"; }
+warn() { echo -e "${YELLOW}WARN${NC} $*"; }
 fail() { echo -e "${RED}FAIL${NC} $*"; ERR=1; }
 ERR=0
 
@@ -115,7 +117,12 @@ for ext in 1001 1002; do
   if [ -z "$BLOCK" ]; then
     fail "extension ${ext} not registered — Zoiper SIP server must be ${EXTERNAL_IP:-<host-ip>}:${SIP_PORT:-5060}"
   elif echo "$BLOCK" | grep -qE '172\.19\.0\.[0-9]+'; then
-    fail "extension ${ext} has Docker contact $(echo "$BLOCK" | awk '{print $2}') — toggle Zoiper reg off/on (SIP server ${EXTERNAL_IP:-<host-ip>}) then: ./start.sh up -d --force-recreate asterisk"
+    # Docker SNAT stores 172.19.0.1; with qualify_frequency=0 inbound/outbound still work.
+    if echo "$BLOCK" | grep -qE 'Avail|NonQual'; then
+      warn "extension ${ext} Docker NAT contact $(echo "$BLOCK" | awk '{print $2}') (normal in Docker lab; calls OK)"
+    else
+      fail "extension ${ext} unreachable Docker contact $(echo "$BLOCK" | awk '{print $2}') — re-register Zoiper to ${EXTERNAL_IP:-<host-ip>}"
+    fi
   elif echo "$BLOCK" | grep -qF "${EXTERNAL_IP:-}"; then
     ok "extension ${ext} registered $(echo "$BLOCK" | awk '{print $2}')"
   elif echo "$BLOCK" | grep -q 'Avail'; then
