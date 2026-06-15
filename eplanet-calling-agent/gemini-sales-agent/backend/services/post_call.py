@@ -148,7 +148,8 @@ async def process_call_end(session_id: int) -> None:
             elif result_summary.get("error"):
                 post_meta["errors"].append(result_summary["error"])
 
-        output_types = summarizer.output_types_for_agent(agent_type)
+        direction = (db_session.meta or {}).get("direction")
+        output_types = summarizer.output_types_for_agent(agent_type, direction=direction)
         for i, otype in enumerate(output_types):
             if i > 0:
                 await asyncio.sleep(13)
@@ -167,6 +168,18 @@ async def process_call_end(session_id: int) -> None:
                 lead_id = await _maybe_create_lead(db, session_id, content)
                 if lead_id:
                     post_meta["lead_id"] = lead_id
+                    db_session.meta = merge_session_meta(
+                        db_session.meta,
+                        {
+                            "lead_id": lead_id,
+                            "captured_contact": {
+                                "name": content.get("name"),
+                                "email": content.get("email"),
+                                "phone": content.get("phone"),
+                                "company": content.get("company"),
+                            },
+                        },
+                    )
 
         post_meta["status"] = "completed" if not post_meta["errors"] else "partial"
         # Reload meta so we do not overwrite token_usage / rag_metrics written at call end.

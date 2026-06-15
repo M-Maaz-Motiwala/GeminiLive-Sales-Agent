@@ -150,10 +150,7 @@ if [ "$ERR" -eq 0 ]; then
   echo "  IP changed?   ./scripts/refresh-ip.sh"
   echo ""
   echo "  Dial 600  = echo test"
-  echo "  Dial 701  = Maya — Lead Qualifier"
-  echo "  Dial 702  = Aria — Trangotech Sales"
-  echo "  Dial 703  = Sam — Support FAQ"
-  echo "  Dial 700  = first active agent (legacy)"
+  echo "  Dial 700  = sales fleet inbound (callbacks; 701–704 alias to 700)"
 else
   echo -e "${RED}Some checks failed.${NC} Fix issues above, then: ./start.sh up -d --build"
   exit 1

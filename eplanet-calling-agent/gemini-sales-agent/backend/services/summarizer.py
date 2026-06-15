@@ -82,9 +82,13 @@ def _agent_type_key(agent_type: Any) -> str:
     return str(agent_type)
 
 
-def output_types_for_agent(agent_type: Any) -> list[str]:
+def output_types_for_agent(agent_type: Any, *, direction: str | None = None) -> list[str]:
     key = _agent_type_key(agent_type)
     types_list = list(_AGENT_OUTPUT_TYPES.get(key, []))
+    if direction == "outbound" and key == AgentType.sales.value:
+        for extra in ("call_disposition", "lead_capture"):
+            if extra not in types_list:
+                types_list.append(extra)
     if "summary" not in types_list:
         types_list.insert(0, "summary")
     return types_list

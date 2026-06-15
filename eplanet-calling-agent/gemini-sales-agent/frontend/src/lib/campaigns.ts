@@ -10,6 +10,9 @@ export type CampaignProgress = {
   percent_done: number;
   active_slots: number;
   max_parallel: number | null;
+  inter_call_delay_sec?: number;
+  agent_ids?: number[];
+  agents_in_cooldown?: number;
   scheduled_at?: string | null;
   runner_active: boolean;
 };
@@ -18,6 +21,8 @@ export type Campaign = {
   id: number;
   name: string;
   agent_id: number;
+  agent_ids?: number[];
+  inter_call_delay_sec?: number;
   status: string;
   description?: string | null;
   lead_count: number;
@@ -52,7 +57,9 @@ export function createCampaign(
   token: string | null,
   body: {
     name: string;
-    agent_id: number;
+    agent_ids: number[];
+    agent_id?: number;
+    inter_call_delay_sec?: number;
     description?: string;
     endpoints?: string[];
     lead_ids?: number[];
@@ -108,7 +115,11 @@ export async function importCampaignCsv(token: string | null, id: number, file: 
 export function startCampaign(
   token: string | null,
   id: number,
-  body: { max_parallel: number; start_at?: string | null },
+  body: {
+    max_parallel: number;
+    inter_call_delay_sec?: number;
+    start_at?: string | null;
+  },
 ) {
   return apiFetch(`/api/campaigns/${id}/start`, token, {
     method: 'POST',

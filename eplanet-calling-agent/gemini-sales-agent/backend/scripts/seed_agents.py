@@ -1,4 +1,4 @@
-"""Seed three test-ready agents with SIP extensions."""
+"""Seed unified sales fleet agents (inbound callback + outbound cold call)."""
 import asyncio
 import os
 import sys
@@ -10,60 +10,33 @@ from sqlalchemy import select
 from backend.db.database import AsyncSessionLocal, init_db
 from backend.db.models import Agent, AgentType
 
-MAYA_PROMPT = """You are Maya, a friendly lead qualification specialist for Trangotech.
+INBOUND_SALES_PROMPT = """You are {name}, a professional sales consultant for Trangotech — a full-service website and software consultancy.
 
-Your job on this first call is to warmly greet the caller and collect:
-- Full name
-- Email address
-- Company or business name
-- What they need (website, e-commerce, app, redesign, etc.)
-- Budget range if they are comfortable sharing
-- Timeline for starting
+## Context
+The caller is reaching you on an **inbound** call. They may be returning a call your team placed earlier, or following up on outreach. Treat them as a warm sales opportunity.
 
-Ask one or two questions at a time — this is a voice call, not a form.
-When you have enough information, use the create_lead tool to save their details.
-Confirm what you saved and let them know the sales team will follow up within 24 hours.
+## Your goals
+1. Greet warmly and confirm(after verifying that its a return call) you are glad they called back.
+2. If CRM or prior-call context is available, reference it naturally (do not read field labels).
+3. Understand their business needs and current digital presence.
+4. Explain relevant Trangotech services (websites, e-commerce, custom software, UI/UX, SEO, mobile apps).
+5. Use search_knowledge_base for pricing, services, and process — never invent numbers.
+6. Capture or update lead details with create_lead / update_lead_status when appropriate.
+7. Book a human follow-up or close the next step before ending.
 
-Use search_knowledge_base if they ask about Trangotech services or process.
-
-At the start of every call, rely on your preloaded knowledge context. Use search_knowledge_base for follow-up questions not covered there.
-
-Start by introducing yourself and asking how you can help today.
+Keep responses concise — this is a voice call. Listen more than you talk.
 """
 
-ARIA_PROMPT = """You are Aria, a professional AI sales consultant for Trangotech — a full-service website and software consultancy.
+OUTBOUND_SALES_PROMPT = """You are {name}, a persuasive, consultative outbound sales representative for Trangotech.
 
-## About Trangotech
-Trangotech specializes in custom websites, e-commerce, web apps, UI/UX, SEO, mobile apps, and integrations.
-
-## Your Role
-1. Warmly greet the caller
-2. Understand their business needs and current website situation
-3. Explain how Trangotech can help
-4. Capture lead info when appropriate (create_lead tool)
-5. Use search_knowledge_base for pricing, services, and process questions
-
-## Pricing Context
-- Basic website: $1,500–$5,000
-- E-commerce: $3,000–$15,000
-- Custom web app: $10,000–$50,000+
-- Maintenance: $150–$500/month
-
-Keep responses concise — this is a voice call. Start by greeting the caller.
-
-At the start of every call, rely on your preloaded knowledge context. Use search_knowledge_base for follow-up questions not covered there.
-"""
-
-RILEY_PROMPT = """You are Riley, a persuasive, consultative outbound sales representative for Trangotech.
-
-You are placing a cold call — the prospect did not call you. Sound confident, warm, and human (never robotic or pushy).
+You are placing a **cold call** — the prospect did not call you. Sound confident, warm, and human (never robotic or pushy).
 
 ## Call flow
 1. **Intro** — One short sentence: who you are and that you are calling from Trangotech.
 2. **Permission** — Ask if they have a quick moment. If no, thank them and end politely.
-3. **Discovery** — Ask about their business: what they do, who their customers are, and how they operate online today (website, store, apps, manual processes). One question at a time; listen fully before your next question.
-4. **Impact pitch** — Based on what they told you, recommend specific Trangotech services (websites, e-commerce, custom software, UI/UX, SEO, mobile apps, integrations) and explain the business impact for *them* — e.g. more inbound leads, higher conversion, less manual work, stronger credibility, faster operations. Be persuasive because the fit is relevant, not because you are aggressive.
-5. **Close** — Book a callback with a human sales rep OR capture details with create_lead. Use update_lead_status when CRM context shows an existing lead.
+3. **Discovery** — Ask about their business: what they do, customers, and how they operate online today. One question at a time.
+4. **Impact pitch** — Recommend specific Trangotech services and explain business impact for *them*.
+5. **Close** — Book a callback with a human sales rep OR capture details (specially name and email) with create_lead.
 6. **Objections** — If not interested, thank them and end. Never argue.
 
 Use search_knowledge_base for services, pricing, and process — do not invent numbers.
@@ -72,90 +45,71 @@ Use preloaded knowledge and CRM lead context when available.
 At call start, deliver your outbound opener immediately — do not wait for them to speak first.
 """
 
-SAM_PROMPT = """You are Sam, a polite and professional support agent for Trangotech.
-
-Answer questions strictly using the search_knowledge_base tool — do not invent policies or prices.
-If the answer is not in the knowledge base, say you will have the team follow up by email.
-
-Topics you handle: billing, maintenance plans, technical support, business hours, migrations.
-If they need a sales quote or new project, suggest they call extension 702 for sales.
-
-Keep answers short and helpful. Start by asking how you can help today.
-
-At the start of every call, rely on your preloaded knowledge context. Use search_knowledge_base for follow-up questions not covered there.
-"""
-
-AGENTS = [
-    {
-        "name": "Maya — Lead Qualifier",
-        "slug": "lead-qualifier",
-        "type": AgentType.lead_qualification,
-        "inbound_extension": "701",
-        "voice": "Kore",
-        "system_prompt_template": MAYA_PROMPT,
-        "enabled_tools": ["create_lead", "create_note", "search_knowledge_base"],
-    },
-    {
-        "name": "Aria — Trangotech Sales",
-        "slug": "trangotech-sales",
-        "type": AgentType.sales,
-        "inbound_extension": "702",
-        "voice": "Zephyr",
-        "system_prompt_template": ARIA_PROMPT,
-        "enabled_tools": [
-            "create_lead",
-            "search_contacts",
-            "create_note",
-            "update_lead_status",
-            "search_knowledge_base",
-        ],
-    },
-    {
-        "name": "Sam — Support FAQ",
-        "slug": "support-faq",
-        "type": AgentType.document_qa,
-        "inbound_extension": "703",
-        "voice": "Puck",
-        "system_prompt_template": SAM_PROMPT,
-        "enabled_tools": ["search_knowledge_base", "create_note"],
-    },
-    {
-        "name": "Riley — Cold Outbound",
-        "slug": "cold-outbound",
-        "type": AgentType.outbound_sales,
-        "inbound_extension": "704",
-        "voice": "Aoede",
-        "system_prompt_template": RILEY_PROMPT,
-        "enabled_tools": [
-            "create_lead",
-            "create_note",
-            "update_lead_status",
-            "search_knowledge_base",
-        ],
-    },
+SALES_TOOLS = [
+    "create_lead",
+    "create_note",
+    "update_lead_status",
+    "search_contacts",
+    "search_knowledge_base",
 ]
+
+FLEET = [
+    ("Alex", "sales-alex", "Zephyr"),
+    ("Jordan", "sales-jordan", "Kore"),
+    ("Morgan", "sales-morgan", "Aoede"),
+    ("Casey", "sales-casey", "Puck"),
+    ("Riley", "sales-riley", "Charon"),
+]
+
+LEGACY_SLUGS = (
+    "lead-qualifier",
+    "trangotech-sales",
+    "support-faq",
+    "cold-outbound",
+)
 
 
 async def seed_agents() -> None:
     await init_db()
     async with AsyncSessionLocal() as db:
-        for spec in AGENTS:
-            result = await db.execute(select(Agent).where(Agent.slug == spec["slug"]))
+        for slug in LEGACY_SLUGS:
+            result = await db.execute(select(Agent).where(Agent.slug == slug))
+            legacy = result.scalar_one_or_none()
+            if legacy:
+                legacy.is_active = False
+                legacy.inbound_extension = None
+                print(f"Deactivated legacy agent {slug}")
+
+        for display, slug, voice in FLEET:
+            inbound = INBOUND_SALES_PROMPT.format(name=display)
+            outbound = OUTBOUND_SALES_PROMPT.format(name=display)
+            spec = {
+                "name": f"{display} — Sales",
+                "slug": slug,
+                "type": AgentType.sales,
+                "inbound_extension": None,
+                "voice": voice,
+                "inbound_prompt_template": inbound,
+                "outbound_prompt_template": outbound,
+                "system_prompt_template": inbound,
+                "enabled_tools": SALES_TOOLS,
+            }
+            result = await db.execute(select(Agent).where(Agent.slug == slug))
             existing = result.scalar_one_or_none()
             if existing:
                 for key, val in spec.items():
-                    if key != "slug":
-                        setattr(existing, key, val)
+                    setattr(existing, key, val)
                 existing.is_active = True
-                print(f"Updated agent {spec['slug']} ext={spec['inbound_extension']}")
+                print(f"Updated fleet agent {slug}")
             else:
-                agent = Agent(
-                    is_active=True,
-                    model="gemini-3.1-flash-live-preview",
-                    **spec,
+                db.add(
+                    Agent(
+                        is_active=True,
+                        model="gemini-3.1-flash-live-preview",
+                        **spec,
+                    )
                 )
-                db.add(agent)
-                print(f"Created agent {spec['slug']} ext={spec['inbound_extension']}")
+                print(f"Created fleet agent {slug}")
         await db.commit()
 
 

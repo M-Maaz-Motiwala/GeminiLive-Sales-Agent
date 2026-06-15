@@ -28,7 +28,7 @@ async def main() -> None:
     print("=== Bootstrap: admin user ===")
     await create_admin(email, password, full_name)
 
-    print("=== Bootstrap: agents (701-704) ===")
+    print("=== Bootstrap: sales fleet agents (5) ===")
     await seed_agents()
 
     settings = get_settings()

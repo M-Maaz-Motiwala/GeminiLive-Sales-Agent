@@ -54,7 +54,7 @@ export default function Outbound() {
       if (agentList.length) {
         const preferred = paramAgent
           ? agentList.find(a => String(a.id) === paramAgent)?.id
-          : agentList.find(a => a.slug === 'cold-outbound')?.id ?? agentList[0].id;
+          : agentList.find(a => a.slug === 'sales-riley')?.id ?? agentList[0]?.id;
         setAgentId(prev => (prev === '' ? preferred ?? agentList[0].id : prev));
       }
       if (paramLead) setLeadId(Number(paramLead));

@@ -10,6 +10,40 @@ from backend.services.tools import crm_tools, rag_tools
 
 logger = logging.getLogger(__name__)
 
+
+async def _attach_lead_to_session(
+    db: AsyncSession,
+    session_id: int,
+    lead_id: int,
+    params: dict,
+) -> None:
+    """Link captured lead details to the live call session for inbound callback lookup."""
+    try:
+        from backend.db.models import Session as DBSession
+        from backend.services.session_metrics import merge_session_meta
+
+        sess = await db.get(DBSession, session_id)
+        if not sess:
+            return
+        patch: dict = {
+            "lead_id": lead_id,
+            "captured_contact": {
+                "name": params.get("name"),
+                "email": params.get("email"),
+                "phone": params.get("phone"),
+                "company": params.get("company"),
+            },
+        }
+        phone = params.get("phone")
+        if phone:
+            patch["lead_phone"] = phone
+            patch["contact_number"] = phone
+        sess.meta = merge_session_meta(sess.meta, patch)
+        await db.flush()
+    except Exception as exc:
+        logger.warning("Failed to attach lead to session %s: %s", session_id, exc)
+
+
 # Tool declarations sent to Gemini during session config
 TOOL_DECLARATIONS = [
     {
@@ -102,9 +136,10 @@ async def dispatch(
     try:
         if tool_name == "create_lead":
             if session_id:
-                from backend.db.models import Lead
                 params["source_session_id"] = session_id
             result = await crm_tools.create_lead(db, params)
+            if session_id and db and result.get("lead_id"):
+                await _attach_lead_to_session(db, session_id, result["lead_id"], params)
 
         elif tool_name == "search_contacts":
             result = await crm_tools.search_contacts(db, params)

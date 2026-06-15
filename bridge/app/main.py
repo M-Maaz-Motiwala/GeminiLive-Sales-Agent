@@ -2097,6 +2097,7 @@ async def internal_status(_: None = Depends(_verify_bridge_token)):
         stall_sec = (
             (now - state.rtp_stall_since) if state.rtp_stall_since else 0.0
         )
+        cfg = state.agent_config or {}
         call_rows.append(
             {
                 "channel_id": call.human_channel_id,
@@ -2106,6 +2107,8 @@ async def internal_status(_: None = Depends(_verify_bridge_token)):
                 "external_channel_id": state.external_channel_id,
                 "platform_session_id": state.platform_session_id,
                 "direction": state.call_direction,
+                "agent_id": cfg.get("agent_id"),
+                "agent_slug": cfg.get("agent_slug"),
                 "rtp_in_frames": state.rtp_in_frames,
                 "rtp_stall_sec": round(stall_sec, 1),
             }

@@ -64,11 +64,8 @@ async def system_info() -> dict:
         "default_admin_email": os.getenv("ADMIN_EMAIL", "admin@aura.ai"),
         "outbound_lab_endpoint": os.getenv("OUTBOUND_LAB_ENDPOINT", "PJSIP/1001"),
         "test_extensions": {
-            "701": "Maya — Lead Qualifier",
-            "702": "Aria — Trangotech Sales",
-            "703": "Sam — Support FAQ",
-            "704": "Riley — Cold Outbound (inbound test)",
-            "700": "First active agent (legacy)",
+            "700": "Sales fleet — inbound callbacks",
+            "701": "Alias → 700 (lab)",
             "600": "Echo test",
         },
     }

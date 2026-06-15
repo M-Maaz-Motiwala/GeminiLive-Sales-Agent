@@ -21,7 +21,8 @@ export default function Campaigns() {
   const [agents, setAgents] = useState<any[]>([]);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [agentId, setAgentId] = useState<number | ''>('');
+  const [agentIds, setAgentIds] = useState<number[]>([]);
+  const [interCallDelay, setInterCallDelay] = useState(30);
   const [endpoints, setEndpoints] = useState('');
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const csvRef = useRef<HTMLInputElement>(null);
@@ -36,15 +37,17 @@ export default function Campaigns() {
     load();
     fetchOutboundAgents(token).then(a => {
       setAgents(a);
-      if (a.length && agentId === '') setAgentId(a[0].id);
+      if (a.length && agentIds.length === 0) {
+        setAgentIds(a.slice(0, Math.min(3, a.length)).map((x: { id: number }) => x.id));
+      }
     });
   }, [token]);
 
   const create = async () => {
     setErr('');
     setMsg('');
-    if (!agentId || !name.trim()) {
-      setErr('Name and agent are required');
+    if (!agentIds.length || !name.trim()) {
+      setErr('Name and at least one agent are required');
       return;
     }
     setBusy(true);
@@ -52,7 +55,8 @@ export default function Campaigns() {
       const eps = endpoints.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
       const campaign = await createCampaign(token, {
         name: name.trim(),
-        agent_id: agentId as number,
+        agent_ids: agentIds,
+        inter_call_delay_sec: interCallDelay,
         description: description.trim() || undefined,
         endpoints: eps.length ? eps : undefined,
       });
@@ -83,7 +87,7 @@ export default function Campaigns() {
     <div className="p-6 lg:p-8 max-w-5xl">
       <PageHeader
         title="Campaigns"
-        subtitle="Batch outbound with progress tracking, CSV import, and rolling parallel dials"
+        subtitle="Fleet outbound — multiple sales agents, adjustable delay between calls, callback routing on 700"
         action={
           <Link to="/admin/outbound">
             <BtnGhost><PhoneOutgoing className="w-4 h-4" /> Quick dial</BtnGhost>
@@ -102,11 +106,49 @@ export default function Campaigns() {
           value={description}
           onChange={e => setDescription(e.target.value)}
         />
-        <select className={selectCls} value={agentId} onChange={e => setAgentId(Number(e.target.value))}>
-          {agents.map(a => (
-            <option key={a.id} value={a.id}>{a.name}</option>
-          ))}
-        </select>
+        <div>
+          <label className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5 block">
+            Sales agents (fleet)
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {agents.map(a => {
+              const on = agentIds.includes(a.id);
+              return (
+                <button
+                  key={a.id}
+                  type="button"
+                  onClick={() =>
+                    setAgentIds(prev =>
+                      on ? prev.filter(id => id !== a.id) : [...prev, a.id],
+                    )
+                  }
+                  className={`px-3 py-1.5 rounded-lg text-xs border transition-colors ${
+                    on
+                      ? 'border-violet-500/60 bg-violet-500/20 text-violet-200'
+                      : 'border-white/10 bg-black/30 text-zinc-400 hover:border-white/20'
+                  }`}
+                >
+                  {a.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <label className="block space-y-1.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+            Delay between calls (seconds)
+          </span>
+          <input
+            type="number"
+            min={0}
+            max={600}
+            className={selectCls}
+            value={interCallDelay}
+            onChange={e => setInterCallDelay(Number(e.target.value) || 0)}
+          />
+          <p className="text-[10px] text-zinc-600">Per-agent cooldown after each call ends (anti-flagging).</p>
+        </label>
 
         <div>
           <label className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5 block">

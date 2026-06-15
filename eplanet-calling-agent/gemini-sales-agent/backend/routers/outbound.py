@@ -71,7 +71,10 @@ async def list_outbound_agents(
 ):
     result = await db.execute(
         select(Agent)
-        .where(Agent.is_active.is_(True), Agent.type == AgentType.outbound_sales)
+        .where(
+            Agent.is_active.is_(True),
+            Agent.type.in_((AgentType.sales, AgentType.outbound_sales)),
+        )
         .order_by(Agent.name)
     )
     agents = result.scalars().all()

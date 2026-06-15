@@ -25,6 +25,8 @@ from backend.db.models import (
 from backend.services.campaign_csv import parse_campaign_csv
 from backend.services.campaign_leads import add_csv_rows, add_endpoints, add_lead_ids
 from backend.services.campaign_runner import (
+    campaign_agent_ids,
+    campaign_inter_call_delay,
     campaign_progress,
     is_runner_active,
     start_runner,
@@ -38,8 +40,10 @@ router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
 
 class CampaignIn(BaseModel):
     name: str
-    agent_id: int
+    agent_ids: list[int] = Field(default_factory=list)
+    agent_id: Optional[int] = None  # legacy single-agent
     description: Optional[str] = None
+    inter_call_delay_sec: int = Field(30, ge=0, le=600)
     lead_ids: list[int] = Field(default_factory=list)
     endpoints: list[str] = Field(default_factory=list)
 
@@ -47,7 +51,9 @@ class CampaignIn(BaseModel):
 class CampaignUpdateIn(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    agent_ids: Optional[list[int]] = None
     agent_id: Optional[int] = None
+    inter_call_delay_sec: Optional[int] = Field(None, ge=0, le=600)
 
 
 class CampaignLeadsIn(BaseModel):
@@ -57,6 +63,7 @@ class CampaignLeadsIn(BaseModel):
 
 class CampaignStartIn(BaseModel):
     max_parallel: int = Field(2, ge=1, le=10)
+    inter_call_delay_sec: Optional[int] = Field(None, ge=0, le=600)
     start_at: Optional[datetime] = Field(
         None,
         description="Schedule start (ISO datetime). Omit or null = start immediately.",
@@ -83,6 +90,8 @@ def _campaign_out(c: Campaign, *, include_progress: bool = True) -> dict[str, An
         "id": c.id,
         "name": c.name,
         "agent_id": c.agent_id,
+        "agent_ids": campaign_agent_ids(c),
+        "inter_call_delay_sec": campaign_inter_call_delay(c),
         "status": c.status.value if hasattr(c.status, "value") else c.status,
         "description": c.description,
         "meta": c.meta or {},
@@ -107,13 +116,35 @@ async def _load_campaign(db: AsyncSession, campaign_id: int) -> Campaign:
     return c
 
 
-async def _validate_agent(db: AsyncSession, agent_id: int) -> Agent:
-    agent = await db.get(Agent, agent_id)
-    if not agent or not agent.is_active:
-        raise HTTPException(404, "Agent not found")
-    if agent.type != AgentType.outbound_sales:
-        raise HTTPException(400, "Campaign agent must be outbound_sales")
-    return agent
+def _resolve_agent_ids(body: CampaignIn | CampaignUpdateIn) -> list[int]:
+    ids = list(getattr(body, "agent_ids", None) or [])
+    legacy = getattr(body, "agent_id", None)
+    if legacy and legacy not in ids:
+        ids.insert(0, legacy)
+    return ids
+
+
+async def _validate_agents(db: AsyncSession, agent_ids: list[int]) -> list[Agent]:
+    if not agent_ids:
+        raise HTTPException(400, "Select at least one sales agent")
+    agents: list[Agent] = []
+    for aid in agent_ids:
+        agent = await db.get(Agent, aid)
+        if not agent or not agent.is_active:
+            raise HTTPException(404, f"Agent {aid} not found")
+        if agent.type not in (AgentType.sales, AgentType.outbound_sales):
+            raise HTTPException(400, f"Agent {agent.name} must be a sales agent")
+        agents.append(agent)
+    return agents
+
+
+def _campaign_meta_agents(
+    meta: dict[str, Any], agent_ids: list[int], inter_call_delay_sec: int
+) -> dict[str, Any]:
+    out = dict(meta or {})
+    out["agent_ids"] = agent_ids
+    out["inter_call_delay_sec"] = inter_call_delay_sec
+    return out
 
 
 @router.get("")
@@ -136,14 +167,15 @@ async def create_campaign(
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    await _validate_agent(db, body.agent_id)
+    agent_ids = _resolve_agent_ids(body)
+    await _validate_agents(db, agent_ids)
 
     campaign = Campaign(
         name=body.name.strip(),
-        agent_id=body.agent_id,
+        agent_id=agent_ids[0],
         description=(body.description or "").strip() or None,
         status=CampaignStatus.draft,
-        meta={},
+        meta=_campaign_meta_agents({}, agent_ids, body.inter_call_delay_sec),
     )
     db.add(campaign)
     await db.flush()
@@ -194,9 +226,22 @@ async def update_campaign(
         c.name = body.name.strip()
     if body.description is not None:
         c.description = body.description.strip() or None
-    if body.agent_id is not None:
-        await _validate_agent(db, body.agent_id)
-        c.agent_id = body.agent_id
+    agent_ids = _resolve_agent_ids(body) if (
+        body.agent_ids is not None or body.agent_id is not None
+    ) else None
+    if agent_ids is not None:
+        await _validate_agents(db, agent_ids)
+        c.agent_id = agent_ids[0]
+        delay = (
+            body.inter_call_delay_sec
+            if body.inter_call_delay_sec is not None
+            else campaign_inter_call_delay(c)
+        )
+        c.meta = _campaign_meta_agents(c.meta, agent_ids, int(delay))
+    elif body.inter_call_delay_sec is not None:
+        c.meta = _campaign_meta_agents(
+            c.meta, campaign_agent_ids(c), body.inter_call_delay_sec
+        )
 
     await db.flush()
     return _campaign_out(c)
@@ -282,8 +327,12 @@ async def start_campaign(
         raise HTTPException(400, "No pending targets to dial")
 
     meta = dict(c.meta or {})
+    if body.inter_call_delay_sec is not None:
+        meta["inter_call_delay_sec"] = body.inter_call_delay_sec
     runner = dict(meta.get("runner") or {})
     runner["max_parallel"] = body.max_parallel
+    runner["inter_call_delay_sec"] = campaign_inter_call_delay(c)
+    runner["agent_ids"] = campaign_agent_ids(c)
     if body.start_at:
         sched = body.start_at
         if sched.tzinfo is None:
@@ -311,6 +360,8 @@ async def start_campaign(
         "campaign_id": campaign_id,
         "status": "running",
         "max_parallel": body.max_parallel,
+        "inter_call_delay_sec": campaign_inter_call_delay(c),
+        "agent_ids": campaign_agent_ids(c),
         "scheduled_at": runner.get("scheduled_at"),
         "pending": len(pending),
     }

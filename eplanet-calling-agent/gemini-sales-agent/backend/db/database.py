@@ -32,5 +32,8 @@ async def get_db():
 
 async def init_db():
     from backend.db.models import Base
+    from backend.db.migrate import apply_migrations
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await apply_migrations()

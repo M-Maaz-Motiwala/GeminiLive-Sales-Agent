@@ -60,6 +60,7 @@ export default function CampaignDetail() {
   const [showStart, setShowStart] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [parallel, setParallel] = useState(2);
+  const [interCallDelay, setInterCallDelay] = useState(30);
   const [scheduleMode, setScheduleMode] = useState<'now' | 'later'>('now');
   const [scheduleAt, setScheduleAt] = useState('');
   const [editName, setEditName] = useState('');
@@ -74,7 +75,8 @@ export default function CampaignDetail() {
         setCampaign(c);
         setEditName(c.name);
         setEditDesc(c.description || '');
-        setParallel(c.progress?.max_parallel ?? 2);
+        setParallel(c.progress?.max_parallel ?? c.agent_ids?.length ?? 2);
+        setInterCallDelay(c.inter_call_delay_sec ?? c.progress?.inter_call_delay_sec ?? 30);
       })
       .catch(e => setErr(e instanceof Error ? e.message : 'Load failed'));
   }, [token, campaignId]);
@@ -95,6 +97,7 @@ export default function CampaignDetail() {
     try {
       await startCampaign(token, campaignId, {
         max_parallel: parallel,
+        inter_call_delay_sec: interCallDelay,
         start_at:
           scheduleMode === 'later' && scheduleAt
             ? new Date(scheduleAt).toISOString()
@@ -249,7 +252,9 @@ export default function CampaignDetail() {
           </div>
           {campaign.status === 'running' && (
             <p className="text-[10px] text-zinc-600 mt-2">
-              Active slots: {p.active_slots}/{p.max_parallel ?? parallel} · rolling dial (next target starts when a slot frees)
+              Active slots: {p.active_slots}/{p.max_parallel ?? parallel}
+              {p.inter_call_delay_sec != null ? ` · ${p.inter_call_delay_sec}s between calls` : ''}
+              {p.agents_in_cooldown ? ` · ${p.agents_in_cooldown} cooling down` : ''}
             </p>
           )}
         </GlassCard>
@@ -271,7 +276,23 @@ export default function CampaignDetail() {
               onChange={e => setParallel(Number(e.target.value))}
             />
             <p className="text-[10px] text-zinc-600 mt-1">
-              Rolling parallel: when one call ends, the next pending number dials immediately — other slots keep running.
+              Max agents dialing at once. Inbound callbacks on ext 700 do not block other agents.
+            </p>
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5 block">
+              Delay between calls (seconds)
+            </label>
+            <input
+              type="number"
+              min={0}
+              max={600}
+              className={selectCls}
+              value={interCallDelay}
+              onChange={e => setInterCallDelay(Number(e.target.value) || 0)}
+            />
+            <p className="text-[10px] text-zinc-600 mt-1">
+              Per-agent cooldown after each outbound ends (reduces carrier flagging).
             </p>
           </div>
           <div className="flex gap-4">

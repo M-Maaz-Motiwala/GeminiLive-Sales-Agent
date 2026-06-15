@@ -15,6 +15,10 @@ router = APIRouter(prefix="/api/agents", tags=["agents"])
 RESERVED_EXTENSIONS = {
     "600",
     "700",
+    "701",
+    "702",
+    "703",
+    "704",
     "1000",
     "1001",
     "1002",
@@ -41,6 +45,8 @@ class AgentIn(BaseModel):
     name: str
     type: AgentType = AgentType.sales
     system_prompt_template: str
+    inbound_prompt_template: Optional[str] = None
+    outbound_prompt_template: Optional[str] = None
     voice: str = "Zephyr"
     model: str = "gemini-3.1-flash-live-preview"
     enabled_tools: list = []
@@ -67,6 +73,8 @@ def _agent_out(a: Agent, doc_count: int = 0) -> dict:
         "slug": a.slug,
         "type": a.type,
         "system_prompt_template": a.system_prompt_template,
+        "inbound_prompt_template": a.inbound_prompt_template,
+        "outbound_prompt_template": a.outbound_prompt_template,
         "voice": a.voice,
         "model": a.model,
         "enabled_tools": a.enabled_tools or [],
@@ -116,6 +124,8 @@ async def create_agent(body: AgentIn, db: AsyncSession = Depends(get_db), user: 
         slug=slug,
         type=body.type,
         system_prompt_template=body.system_prompt_template,
+        inbound_prompt_template=body.inbound_prompt_template,
+        outbound_prompt_template=body.outbound_prompt_template,
         voice=body.voice,
         model=body.model,
         enabled_tools=body.enabled_tools,

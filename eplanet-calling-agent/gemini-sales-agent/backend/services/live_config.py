@@ -28,46 +28,58 @@ Engagement during lookups (critical — no dead air):
 
 """
 
-PRELOAD_QUERY = "company overview services products pricing policies support process agent role"
+INBOUND_KB_QUERY = (
+    "company overview services products pricing sales process callback returning prospect"
+)
+OUTBOUND_KB_QUERY = (
+    "cold outbound sales script discovery objections pricing services trangotech pitch"
+)
 
-# Reuse KB preload across outbound dials for the same agent (faster Gemini connect).
-_PRELOAD_CACHE: dict[int, tuple[float, str, dict[str, Any]]] = {}
+_PRELOAD_CACHE: dict[tuple[int, str], tuple[float, str, dict[str, Any]]] = {}
 PRELOAD_CACHE_TTL_SEC = int(os.getenv("KB_PRELOAD_CACHE_TTL_SEC", "300"))
 
-OUTBOUND_CALL_SUPPLEMENT = """
-## Outbound call mode
-You placed this call — the prospect did not dial in.
-- Open with a brief introduction and ask if they have a moment before pitching.
-- Goal: explain Trangotech value briefly and book a callback or capture lead details (create_lead).
-- If they are not interested or ask not to be called again, thank them politely and wrap up.
-- Never be pushy; respect hang-ups and "no time" immediately.
-- Use any CRM lead context below to personalize — do not read field names aloud.
 
-"""
+def _role_prompt(agent: Agent, direction: str) -> str:
+    is_outbound = direction == "outbound"
+    if is_outbound and agent.outbound_prompt_template:
+        return agent.outbound_prompt_template
+    if not is_outbound and agent.inbound_prompt_template:
+        return agent.inbound_prompt_template
+    if agent.system_prompt_template:
+        return agent.system_prompt_template
+    agent_type = agent.type.value if hasattr(agent.type, "value") else str(agent.type)
+    return SYSTEM_PROMPTS.get(agent_type, SYSTEM_PROMPTS["sales"])
 
 
-async def preload_agent_context(agent: Agent, top_k: int = 5) -> tuple[str, dict[str, Any]]:
-    """Fetch core KB chunks for injection at call start. Returns (text block, meta dict)."""
+async def preload_agent_context(
+    agent: Agent,
+    *,
+    direction: str = "inbound",
+    top_k: int = 5,
+) -> tuple[str, dict[str, Any]]:
+    """Fetch direction-aware KB chunks for injection at call start."""
     enabled = list(agent.enabled_tools or [])
     if "search_knowledge_base" not in enabled:
-        return "", {"chunks": [], "query": PRELOAD_QUERY, "skipped": "kb_tool_disabled"}
+        return "", {"chunks": [], "skipped": "kb_tool_disabled"}
 
+    cache_key = (agent.id, direction)
     if PRELOAD_CACHE_TTL_SEC > 0:
-        cached = _PRELOAD_CACHE.get(agent.id)
+        cached = _PRELOAD_CACHE.get(cache_key)
         if cached and (time.time() - cached[0]) < PRELOAD_CACHE_TTL_SEC:
             block, meta = cached[1], dict(cached[2])
             meta["cache_hit"] = True
             return block, meta
 
+    kb_query = OUTBOUND_KB_QUERY if direction == "outbound" else INBOUND_KB_QUERY
     try:
         from backend.services import rag_service
 
         agent_type = agent.type.value if hasattr(agent.type, "value") else str(agent.type)
-        query = f"{agent.name} {agent_type} {PRELOAD_QUERY}"
+        query = f"{agent.name} {agent_type} {kb_query}"
         results, latency_ms = await rag_service.query_with_timing(query, agent.id, top_k=top_k)
         if not results:
-            logger.warning("No KB chunks preloaded for agent %s", agent.slug)
-            return "", {"chunks": [], "query": query, "skipped": "no_results"}
+            logger.warning("No KB chunks preloaded for agent %s (%s)", agent.slug, direction)
+            return "", {"chunks": [], "query": query, "skipped": "no_results", "direction": direction}
 
         lines = []
         chunks_meta = []
@@ -80,7 +92,7 @@ async def preload_agent_context(agent: Agent, top_k: int = 5) -> tuple[str, dict
             chunks_meta.append({"text": text[:500], "score": score, "doc_id": r.get("doc_id")})
 
         if not lines:
-            return "", {"chunks": [], "query": query, "skipped": "empty_chunks"}
+            return "", {"chunks": [], "query": query, "skipped": "empty_chunks", "direction": direction}
 
         block = (
             "## Preloaded Knowledge (use as primary source at call start)\n"
@@ -97,13 +109,14 @@ async def preload_agent_context(agent: Agent, top_k: int = 5) -> tuple[str, dict
             "query": query,
             "latency_ms": latency_ms,
             "metrics": rag_eval,
+            "direction": direction,
         }
         if PRELOAD_CACHE_TTL_SEC > 0 and block:
-            _PRELOAD_CACHE[agent.id] = (time.time(), block, meta)
+            _PRELOAD_CACHE[cache_key] = (time.time(), block, meta)
         return block, meta
     except Exception as exc:
         logger.warning("KB preload failed for agent %s: %s", agent.slug, exc)
-        return "", {"chunks": [], "query": PRELOAD_QUERY, "error": str(exc)}
+        return "", {"chunks": [], "error": str(exc), "direction": direction}
 
 
 def format_lead_context(lead: dict[str, Any]) -> str:
@@ -133,17 +146,14 @@ def agent_to_live_config(
     kb_context: str = "",
     *,
     lead_context: str = "",
+    prior_call_context: str = "",
     direction: str = "inbound",
 ) -> dict[str, Any]:
     """Return config dict consumed by the SIP bridge."""
-    agent_type = agent.type.value if hasattr(agent.type, "value") else str(agent.type)
-    role_prompt = agent.system_prompt_template or SYSTEM_PROMPTS.get(
-        agent_type, SYSTEM_PROMPTS["sales"]
-    )
+    role_prompt = _role_prompt(agent, direction)
     system_prompt = VOICE_MASTER_PROMPT + role_prompt
-    is_outbound = direction == "outbound" or agent_type == AgentType.outbound_sales.value
-    if is_outbound:
-        system_prompt += OUTBOUND_CALL_SUPPLEMENT
+    if prior_call_context:
+        system_prompt += "\n\n" + prior_call_context
     if lead_context:
         system_prompt += "\n\n" + lead_context
     if kb_context:
@@ -167,4 +177,5 @@ def agent_to_live_config(
         "voice": agent.voice or "Zephyr",
         "system_instruction": system_prompt,
         "tools": tools,
+        "direction": direction,
     }

@@ -1,4 +1,4 @@
-"""Background campaign dialer — rolling parallel slots (fill next as calls end)."""
+"""Background campaign dialer — fleet of sales agents with per-agent cooldown."""
 from __future__ import annotations
 
 import asyncio
@@ -19,15 +19,17 @@ from backend.db.models import (
     CampaignStatus,
     Lead,
     Session as DBSession,
+    SessionStatus,
 )
 from backend.services.bridge_client import bridge_status
+from backend.services.callback_router import busy_agent_ids
 from backend.services.outbound_dialer import dial_one
 
 logger = logging.getLogger(__name__)
 
 POLL_SEC = 2.0
-# Originate → StasisStart → bridge._calls can take several seconds.
 DIAL_SETUP_GRACE_SEC = 45.0
+DEFAULT_INTER_CALL_DELAY_SEC = 30
 _tasks: dict[int, asyncio.Task] = {}
 
 
@@ -40,8 +42,27 @@ def _bridge_channel_ids(bridge: dict[str, Any]) -> set[str]:
     return ids
 
 
+def campaign_agent_ids(campaign: Campaign) -> list[int]:
+    meta = campaign.meta or {}
+    ids = meta.get("agent_ids")
+    if isinstance(ids, list) and ids:
+        return [int(x) for x in ids]
+    return [int(campaign.agent_id)]
+
+
+def campaign_inter_call_delay(campaign: Campaign) -> float:
+    meta = campaign.meta or {}
+    delay = meta.get("inter_call_delay_sec")
+    if delay is None:
+        runner = meta.get("runner") or {}
+        delay = runner.get("inter_call_delay_sec")
+    try:
+        return max(0.0, float(delay if delay is not None else DEFAULT_INTER_CALL_DELAY_SEC))
+    except (TypeError, ValueError):
+        return float(DEFAULT_INTER_CALL_DELAY_SEC)
+
+
 def _normalize_active_dials(raw: Any) -> dict[str, dict[str, Any]]:
-    """Migrate legacy {cl_id: channel_id} to {cl_id: {channel_id, started_at, seen_live}}."""
     out: dict[str, dict[str, Any]] = {}
     if not isinstance(raw, dict):
         return out
@@ -57,6 +78,7 @@ def _normalize_active_dials(raw: Any) -> dict[str, dict[str, Any]]:
                 "channel_id": val["channel_id"],
                 "started_at": float(val.get("started_at") or time.monotonic()),
                 "seen_live": bool(val.get("seen_live")),
+                "agent_id": val.get("agent_id"),
             }
     return out
 
@@ -110,13 +132,49 @@ async def _attach_session_for_channel(
             return
 
 
+def _set_agent_cooldown(
+    runner: dict[str, Any], agent_id: int, delay_sec: float
+) -> None:
+    agent_state = runner.setdefault("agent_state", {})
+    agent_state[str(agent_id)] = {
+        "status": "cooldown",
+        "cooldown_until": time.monotonic() + delay_sec,
+    }
+
+
+def _available_fleet_agents(
+    agent_ids: list[int],
+    active_dials: dict[str, dict[str, Any]],
+    runner: dict[str, Any],
+    extra_busy: set[int],
+) -> list[int]:
+    now = time.monotonic()
+    busy = set(extra_busy)
+    for info in active_dials.values():
+        aid = info.get("agent_id")
+        if aid is not None:
+            busy.add(int(aid))
+
+    agent_state = runner.get("agent_state") or {}
+    available: list[int] = []
+    for aid in agent_ids:
+        if aid in busy:
+            continue
+        st = agent_state.get(str(aid)) or {}
+        if float(st.get("cooldown_until") or 0) > now:
+            continue
+        available.append(aid)
+    return available
+
+
 async def _reconcile_active(
     db,
     campaign: Campaign,
     active_dials: dict[str, dict[str, Any]],
     bridge_channels: set[str],
+    inter_call_delay: float,
+    runner: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:
-    """Mark leads completed when their bridge channel has ended."""
     now = time.monotonic()
     for cl_id, info in list(active_dials.items()):
         channel_id = info.get("channel_id")
@@ -132,7 +190,6 @@ async def _reconcile_active(
         seen_live = bool(info.get("seen_live"))
 
         if not seen_live and age < DIAL_SETUP_GRACE_SEC:
-            # Originated but not in bridge yet (StasisStart still setting up).
             continue
 
         cl = await db.get(CampaignLead, int(cl_id))
@@ -143,6 +200,9 @@ async def _reconcile_active(
             else:
                 cl.status = CampaignLeadStatus.failed
                 cl.last_error = "Call never connected on bridge (timeout)"
+        aid = info.get("agent_id")
+        if aid is not None:
+            _set_agent_cooldown(runner, int(aid), inter_call_delay)
         active_dials.pop(cl_id, None)
     return active_dials
 
@@ -150,12 +210,21 @@ async def _reconcile_active(
 async def _fill_slots(
     db,
     campaign: Campaign,
-    agent: Agent,
+    agent_ids: list[int],
     active_dials: dict[str, dict[str, Any]],
     max_parallel: int,
+    inter_call_delay: float,
+    runner: dict[str, Any],
+    extra_busy: set[int],
 ) -> dict[str, dict[str, Any]]:
     slots = max_parallel - len(active_dials)
     if slots <= 0:
+        return active_dials
+
+    available_agents = _available_fleet_agents(
+        agent_ids, active_dials, runner, extra_busy
+    )
+    if not available_agents:
         return active_dials
 
     result = await db.execute(
@@ -165,13 +234,16 @@ async def _fill_slots(
             CampaignLead.status == CampaignLeadStatus.pending,
         )
         .order_by(CampaignLead.id)
-        .limit(slots)
+        .limit(min(slots, len(available_agents)))
     )
     pending = list(result.scalars().all())
     if not pending:
         return active_dials
 
-    for cl in pending:
+    for cl, agent_id in zip(pending, available_agents):
+        agent = await db.get(Agent, agent_id)
+        if not agent:
+            continue
         lead = await db.get(Lead, cl.lead_id) if cl.lead_id else None
         cl.status = CampaignLeadStatus.dialing
         cl.dialed_at = datetime.now(timezone.utc)
@@ -188,12 +260,16 @@ async def _fill_slots(
             if channel_id:
                 active_dials[str(cl.id)] = {
                     "channel_id": channel_id,
+                    "agent_id": agent.id,
                     "started_at": time.monotonic(),
                     "seen_live": False,
                 }
+                agent_state = runner.setdefault("agent_state", {})
+                agent_state[str(agent.id)] = {"status": "dialing"}
                 logger.info(
-                    "Campaign %s originated lead %s endpoint=%s channel=%s",
+                    "Campaign %s agent=%s lead=%s endpoint=%s channel=%s",
                     campaign.id,
+                    agent.slug,
                     cl.id,
                     cl.endpoint,
                     channel_id,
@@ -201,9 +277,11 @@ async def _fill_slots(
             else:
                 cl.status = CampaignLeadStatus.failed
                 cl.last_error = "Originate returned no channel id"
+                _set_agent_cooldown(runner, agent.id, inter_call_delay)
         except Exception as exc:
             cl.status = CampaignLeadStatus.failed
             cl.last_error = str(exc)
+            _set_agent_cooldown(runner, agent.id, inter_call_delay)
             logger.warning(
                 "Campaign %s lead %s dial failed: %s", campaign.id, cl.id, exc
             )
@@ -251,25 +329,41 @@ async def _run_loop(
                 if campaign.status != CampaignStatus.running:
                     break
 
-                agent = await db.get(Agent, campaign.agent_id)
-                if not agent:
+                agent_ids = campaign_agent_ids(campaign)
+                if not agent_ids:
                     campaign.status = CampaignStatus.paused
                     await db.commit()
                     break
 
+                inter_call_delay = campaign_inter_call_delay(campaign)
                 meta = _runner_meta(campaign)
                 runner = meta["runner"]
                 runner["max_parallel"] = max_parallel
+                runner["inter_call_delay_sec"] = inter_call_delay
+                runner["agent_ids"] = agent_ids
                 active_dials = _normalize_active_dials(runner.get("active_dials"))
 
                 bridge = await bridge_status()
                 bridge_channels = _bridge_channel_ids(bridge)
+                inbound_busy = await busy_agent_ids(db)
 
                 active_dials = await _reconcile_active(
-                    db, campaign, active_dials, bridge_channels
+                    db,
+                    campaign,
+                    active_dials,
+                    bridge_channels,
+                    inter_call_delay,
+                    runner,
                 )
                 active_dials = await _fill_slots(
-                    db, campaign, agent, active_dials, max_parallel
+                    db,
+                    campaign,
+                    agent_ids,
+                    active_dials,
+                    max_parallel,
+                    inter_call_delay,
+                    runner,
+                    inbound_busy,
                 )
                 runner["active_dials"] = active_dials
                 runner["last_tick"] = datetime.now(timezone.utc).isoformat()
@@ -308,6 +402,12 @@ def campaign_progress(campaign: Campaign) -> dict[str, Any]:
     done = counts.get("completed", 0) + counts.get("failed", 0) + counts.get("skipped", 0)
     meta = campaign.meta or {}
     runner = meta.get("runner") or {}
+    agent_state = runner.get("agent_state") or {}
+    cooling = sum(
+        1
+        for st in agent_state.values()
+        if isinstance(st, dict) and st.get("status") == "cooldown"
+    )
     return {
         "total": total,
         "pending": counts.get("pending", 0),
@@ -318,6 +418,9 @@ def campaign_progress(campaign: Campaign) -> dict[str, Any]:
         "percent_done": round(100 * done / total) if total else 0,
         "active_slots": len(_normalize_active_dials(runner.get("active_dials"))),
         "max_parallel": runner.get("max_parallel"),
+        "inter_call_delay_sec": campaign_inter_call_delay(campaign),
+        "agent_ids": campaign_agent_ids(campaign),
+        "agents_in_cooldown": cooling,
         "scheduled_at": runner.get("scheduled_at"),
         "runner_active": is_runner_active(campaign.id),
     }

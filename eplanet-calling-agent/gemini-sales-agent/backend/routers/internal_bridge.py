@@ -25,6 +25,11 @@ from backend.db.models import (
 )
 from backend.services.session_contact import build_call_contact_meta
 from backend.services import tool_executor
+from backend.services.callback_router import resolve_inbound_agent
+from backend.services.callback_context import (
+    format_prior_call_context,
+    load_inbound_callback_context,
+)
 from backend.services.live_config import (
     agent_to_live_config,
     format_lead_context,
@@ -80,8 +85,9 @@ class CallEndIn(BaseModel):
 
 
 async def _resolve_agent(db: AsyncSession, body: CallStartIn) -> Agent:
-    """Lookup agent by Stasis slug, dialed extension, or fallback to first active."""
-    if body.agent_slug:
+    """Outbound: explicit slug. Inbound: callback-aware fleet routing."""
+    direction = body.direction or "inbound"
+    if direction == "outbound" and body.agent_slug:
         result = await db.execute(
             select(Agent).where(
                 Agent.slug == body.agent_slug,
@@ -93,20 +99,16 @@ async def _resolve_agent(db: AsyncSession, body: CallStartIn) -> Agent:
             return agent
         logger.warning("No active agent for slug=%s; falling back", body.agent_slug)
 
-    if body.dialed_extension and body.dialed_extension not in ("700", "s"):
-        result = await db.execute(
-            select(Agent).where(
-                Agent.inbound_extension == body.dialed_extension,
-                Agent.is_active.is_(True),
+    if direction == "inbound":
+        try:
+            return await resolve_inbound_agent(
+                db,
+                caller_id=body.caller_id,
+                agent_slug=body.agent_slug,
+                dialed_extension=body.dialed_extension,
             )
-        )
-        agent = result.scalar_one_or_none()
-        if agent:
-            return agent
-        logger.warning(
-            "No active agent for extension=%s; falling back",
-            body.dialed_extension,
-        )
+        except RuntimeError:
+            raise HTTPException(status_code=503, detail="No active agent configured")
 
     result = await db.execute(
         select(Agent).where(Agent.is_active.is_(True)).order_by(Agent.id).limit(1)
@@ -156,6 +158,7 @@ async def call_start(
                 meta["campaign_name"] = camp.name
 
     lead_context = ""
+    prior_call_context = ""
     if body.lead_id is not None:
         lead_row = await db.get(Lead, body.lead_id)
         if lead_row:
@@ -171,6 +174,19 @@ async def call_start(
                 }
             )
 
+    if direction == "inbound" and body.caller_id:
+        callback_ctx = await load_inbound_callback_context(db, body.caller_id)
+        if callback_ctx:
+            prior_call_context = format_prior_call_context(callback_ctx)
+            meta["is_return_call"] = True
+            meta["callback_from_session_id"] = callback_ctx.get("prior_session_id")
+            if callback_ctx.get("lead_id") is not None:
+                meta["lead_id"] = callback_ctx["lead_id"]
+            if callback_ctx.get("prior_started_at"):
+                meta["callback_from_started_at"] = callback_ctx["prior_started_at"]
+            if not lead_context and callback_ctx.get("lead"):
+                lead_context = format_lead_context(callback_ctx["lead"])
+
     channel_type = ChannelType.outbound if direction == "outbound" else ChannelType.sip
 
     db_session = DBSession(
@@ -183,13 +199,14 @@ async def call_start(
     db.add(db_session)
     await db.flush()
 
-    kb_block, kb_meta = await preload_agent_context(agent)
+    kb_block, kb_meta = await preload_agent_context(agent, direction=direction)
     meta["preloaded_kb"] = kb_meta
 
     config = agent_to_live_config(
         agent,
         kb_context=kb_block,
         lead_context=lead_context,
+        prior_call_context=prior_call_context,
         direction=direction,
     )
     config["session_id"] = db_session.id

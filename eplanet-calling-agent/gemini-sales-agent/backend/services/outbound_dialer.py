@@ -27,8 +27,8 @@ async def dial_one(
     caller_id: Optional[str] = None,
     campaign_lead_id: Optional[int] = None,
 ) -> dict[str, Any]:
-    if agent.type != AgentType.outbound_sales:
-        raise ValueError("Agent is not outbound_sales")
+    if agent.type not in (AgentType.sales, AgentType.outbound_sales):
+        raise ValueError("Agent is not a sales agent")
 
     phone = lead.phone if lead else None
     await assert_may_dial(db, phone=phone)

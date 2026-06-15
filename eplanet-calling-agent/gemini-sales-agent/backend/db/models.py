@@ -101,6 +101,8 @@ class Agent(Base):
     slug = Column(String(255), unique=True, nullable=False, index=True)
     type = Column(Enum(AgentType), default=AgentType.sales, nullable=False)
     system_prompt_template = Column(Text, nullable=False)
+    inbound_prompt_template = Column(Text, nullable=True)
+    outbound_prompt_template = Column(Text, nullable=True)
     voice = Column(String(100), default="Zephyr")
     model = Column(String(100), default="gemini-3.1-flash-live-preview")
     enabled_tools = Column(JSON, default=list)
