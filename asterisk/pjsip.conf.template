@@ -11,6 +11,7 @@ bind=0.0.0.0:5060
 ; Do NOT add 172.19.0.0/16 — Docker SNAT stores Contact as 172.19.0.1 and outbound fails.
 ; Publish SIP port 5060 with mode:host in docker-compose; Zoiper SIP server = EXTERNAL_IP.
 local_net=127.0.0.0/8
+local_net=172.16.100.0/24
 @EXTERNAL_IP_LINES@
 
 ; -------------------- Extension 1000 --------------------
@@ -375,3 +376,64 @@ type=aor
 max_contacts=3
 remove_existing=no
 qualify_frequency=0
+
+; =============================================================================
+; DIDWW — inbound Voice-IN (regional SBCs) + outbound termination (out.didww.com)
+; Docs: https://doc.didww.com/integrations/asterisk/
+; =============================================================================
+
+; Inbound PSTN — match DIDWW Voice-IN signaling IPs (no registration)
+[didww_in]
+type=endpoint
+transport=transport-udp
+context=from-trunk
+disallow=all
+allow=ulaw
+allow=alaw
+direct_media=no
+force_rport=yes
+rtp_symmetric=yes
+trust_id_inbound=yes
+timers=no
+@MEDIA_ADDRESS_LINE@
+
+[didww_in]
+type=identify
+endpoint=didww_in
+match=46.19.209.14/32
+match=46.19.210.14/32
+match=46.19.212.14/32
+match=46.19.213.14/32
+match=46.19.214.14/32
+match=46.19.215.14/32
+match=185.238.172.4/32
+
+; Outbound PSTN — IP whitelist + optional digest (username from DIDWW portal)
+[didww_trunk_auth]
+type=auth
+auth_type=userpass
+username=@DIDWW_USER@
+password=@DIDWW_PASS@
+realm=out.didww.com
+
+[didww_trunk]
+type=aor
+contact=sip:out.didww.com
+qualify_frequency=60
+
+[didww_trunk]
+type=endpoint
+transport=transport-udp
+disallow=all
+allow=ulaw
+allow=alaw
+outbound_auth=didww_trunk_auth
+aors=didww_trunk
+from_user=@DIDWW_USER@
+from_domain=@DIDWW_FROM_DOMAIN@
+direct_media=no
+force_rport=yes
+rtp_symmetric=yes
+rewrite_contact=yes
+timers=no
+@MEDIA_ADDRESS_LINE@

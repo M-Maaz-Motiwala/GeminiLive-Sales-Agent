@@ -18,6 +18,9 @@ read_env() {
   raw="${line%$'\r'}"
   raw="${raw#\"}"; raw="${raw%\"}"
   raw="${raw#\'}"; raw="${raw%\'}"
+  # Strip inline comments (e.g. EXTERNAL_IP=windows # prod)
+  raw="${raw%%#*}"
+  raw="$(printf '%s' "$raw" | sed 's/[[:space:]]*$//')"
   if [ -n "$raw" ]; then
     echo "$raw"
   else

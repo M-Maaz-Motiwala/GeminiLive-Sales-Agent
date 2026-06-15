@@ -11,6 +11,10 @@ for ext in 1001 1002 1003 1004 1005 1006 1007 1008 1009 1010; do
   eval "SIP_PASS_${ext}=\${SIP_PASS_${ext}:-${ext}pass}"
 done
 
+DIDWW_USER="${DIDWW_SIP_USER:-86vbvm130t}"
+DIDWW_PASS="${DIDWW_SIP_SECRET:-}"
+DIDWW_FROM_DOMAIN="${DIDWW_FROM_DOMAIN:-${EXTERNAL_IP:-}}"
+
 if [ -n "${EXTERNAL_IP}" ]; then
   PJSIP_NAT="external_media_address=${EXTERNAL_IP}
 external_signaling_address=${EXTERNAL_IP}"
@@ -38,6 +42,12 @@ for ext in 1001 1002 1003 1004 1005 1006 1007 1008 1009 1010; do
 done
 # shellcheck disable=SC2086
 sed -i "${SED_PASS}" /etc/asterisk/pjsip.conf
+
+sed -i \
+  -e "s|@DIDWW_USER@|${DIDWW_USER}|g" \
+  -e "s|@DIDWW_PASS@|${DIDWW_PASS}|g" \
+  -e "s|@DIDWW_FROM_DOMAIN@|${DIDWW_FROM_DOMAIN}|g" \
+  /etc/asterisk/pjsip.conf
 
 awk -v rtp="$RTP_NAT" '
   /@EXTERNADDR_LINE@/ { print rtp; next }
