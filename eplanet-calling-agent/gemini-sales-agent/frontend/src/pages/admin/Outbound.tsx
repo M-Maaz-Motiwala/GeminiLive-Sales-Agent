@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/src/auth/AuthContext';
 import { PhoneOutgoing, Radio, AlertCircle, Wifi, RefreshCw } from 'lucide-react';
@@ -28,6 +28,8 @@ export default function Outbound() {
   const [dialing, setDialing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [bridgeInfo, setBridgeInfo] = useState<{ active_calls?: number; max_concurrent?: number }>({});
+  const endpointInitialized = useRef(false);
+  const isTrunk = (info?.outbound_mode || '').toLowerCase() === 'trunk';
 
   const load = async () => {
     if (!token) return;
@@ -58,7 +60,11 @@ export default function Outbound() {
         setAgentId(prev => (prev === '' ? preferred ?? agentList[0].id : prev));
       }
       if (paramLead) setLeadId(Number(paramLead));
-      setEndpoint(sysInfo?.outbound_lab_endpoint || DEFAULT_LAB_ENDPOINT);
+      if (!endpointInitialized.current) {
+        const trunk = (sysInfo?.outbound_mode || '').toLowerCase() === 'trunk';
+        setEndpoint(trunk ? '' : (sysInfo?.outbound_lab_endpoint || DEFAULT_LAB_ENDPOINT));
+        endpointInitialized.current = true;
+      }
     } finally {
       setLoading(false);
     }
@@ -81,7 +87,7 @@ export default function Outbound() {
     try {
       const res = await dialOutbound(token, {
         agent_id: Number(agentId),
-        endpoint: endpoint.trim() || undefined,
+        ...(endpoint.trim() ? { endpoint: endpoint.trim() } : {}),
         ...(leadId !== '' ? { lead_id: Number(leadId) } : {}),
       });
       setStatus(
@@ -232,15 +238,27 @@ export default function Outbound() {
                 </label>
 
                 <label className="block space-y-1.5">
-                  <span className="text-xs text-zinc-500 uppercase tracking-wide">Dial target (ARI endpoint)</span>
+                  <span className="text-xs text-zinc-500 uppercase tracking-wide">
+                    {isTrunk ? 'Phone number (E.164)' : 'Dial target (ARI endpoint)'}
+                  </span>
                   <input
                     className={selectCls}
                     value={endpoint}
                     onChange={e => setEndpoint(e.target.value)}
-                    placeholder={DEFAULT_LAB_ENDPOINT}
+                    placeholder={isTrunk ? '+12105551234 or +923351234567' : DEFAULT_LAB_ENDPOINT}
                   />
                   <p className="text-[10px] text-zinc-600">
-                    Lab: keep <code className="text-zinc-400">PJSIP/1001</code> when using mobile Zoiper as 1001.
+                    {isTrunk ? (
+                      <>
+                        Trunk mode: enter <code className="text-zinc-400">+countrycode…</code> (e.g.{' '}
+                        <code className="text-zinc-400">+92335…</code>). Or select a lead with a phone number — leave
+                        blank to use the lead&apos;s phone.
+                      </>
+                    ) : (
+                      <>
+                        Lab: keep <code className="text-zinc-400">PJSIP/1001</code> when using mobile Zoiper as 1001.
+                      </>
+                    )}
                   </p>
                 </label>
 

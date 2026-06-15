@@ -50,3 +50,12 @@ def lab_pjsip_endpoint(phone: str) -> Optional[str]:
     if (phone or "").upper().startswith("PJSIP/"):
         return phone.strip()
     return None
+
+
+def trunk_pjsip_endpoint(e164: str, trunk_name: str) -> str:
+    """ARI dial string for SIP trunk (digits only in URI — no '+')."""
+    num = digits_only(e164)
+    trunk = (trunk_name or "").strip()
+    if not num or not trunk:
+        raise ValueError(f"Invalid trunk dial: e164={e164!r} trunk={trunk_name!r}")
+    return f"PJSIP/{num}@{trunk}"

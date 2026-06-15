@@ -5,9 +5,42 @@ from typing import Optional
 
 from backend.config import get_settings
 from backend.db.models import Lead
-from backend.services.phone_utils import lab_pjsip_endpoint, normalize_e164
+from backend.services.phone_utils import (
+    lab_pjsip_endpoint,
+    normalize_e164,
+    trunk_pjsip_endpoint,
+)
 
 settings = get_settings()
+
+
+def _resolve_explicit_endpoint(ep: str, mode: str) -> tuple[str, str]:
+    """Turn UI/campaign input into a valid ARI endpoint string."""
+    raw = ep.strip()
+    if raw.upper().startswith("PJSIP/"):
+        return raw, "explicit"
+
+    lab = lab_pjsip_endpoint(raw)
+    if lab and mode == "lab":
+        return lab, "explicit_lab"
+
+    e164 = normalize_e164(raw, settings.outbound_default_country_code)
+    if mode == "trunk" and e164:
+        trunk = settings.outbound_trunk_name.strip()
+        if not trunk:
+            raise ValueError("OUTBOUND_TRUNK_NAME not configured for trunk mode")
+        return trunk_pjsip_endpoint(e164, trunk), "explicit_trunk"
+
+    if lab:
+        return lab, "explicit_lab"
+
+    if e164 and mode == "trunk":
+        trunk = settings.outbound_trunk_name.strip()
+        if not trunk:
+            raise ValueError("OUTBOUND_TRUNK_NAME not configured for trunk mode")
+        return trunk_pjsip_endpoint(e164, trunk), "explicit_trunk"
+
+    return raw, "explicit"
 
 
 def resolve_endpoint(
@@ -19,14 +52,16 @@ def resolve_endpoint(
     """
     Return (ari_endpoint, meta).
     lab mode: PJSIP/1001 or lead extension
-    trunk mode: PJSIP/+E164@trunk_name (stub until trunk configured)
+    trunk mode: PJSIP/E164@trunk_name
     """
     mode = (settings.outbound_mode or "lab").strip().lower()
     meta: dict = {"mode": mode}
 
     if explicit_endpoint and explicit_endpoint.strip():
-        ep = explicit_endpoint.strip()
-        meta["source"] = "explicit"
+        ep, source = _resolve_explicit_endpoint(explicit_endpoint, mode)
+        meta["source"] = source
+        if source.startswith("explicit_trunk"):
+            meta["e164"] = normalize_e164(explicit_endpoint, settings.outbound_default_country_code)
         return ep, meta
 
     raw_phone = (phone or (lead.phone if lead else None) or "").strip()
@@ -45,9 +80,8 @@ def resolve_endpoint(
             if not trunk:
                 raise ValueError("OUTBOUND_TRUNK_NAME not configured for trunk mode")
             meta["source"] = "trunk"
-            return f"PJSIP/{e164}@{trunk}", meta
+            return trunk_pjsip_endpoint(e164, trunk), meta
 
-        # lab mode: try lab extension from lead phone
         if lab:
             meta["source"] = "lead_lab_extension"
             return lab, meta

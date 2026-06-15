@@ -7,25 +7,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
 from backend.db.models import Campaign, CampaignLead, Lead, LeadStatus
-from backend.services.phone_utils import lab_pjsip_endpoint, normalize_e164
+from backend.services.endpoint_resolver import _resolve_explicit_endpoint
+from backend.services.phone_utils import normalize_e164
 
 settings = get_settings()
 
 
 def normalize_dial_endpoint(raw: str) -> str:
-    """Accept PJSIP/1002, 1002, or +E164 and return an Asterisk endpoint string."""
+    """Accept PJSIP/1002, 1002, 0335..., or +E164 → full ARI endpoint string."""
     ep = (raw or "").strip()
     if not ep:
         return ep
-    if ep.upper().startswith("PJSIP/"):
-        return ep
-    lab = lab_pjsip_endpoint(ep)
-    if lab:
-        return lab
-    e164 = normalize_e164(ep, settings.outbound_default_country_code)
-    if e164:
-        return e164
-    return ep
+    mode = (settings.outbound_mode or "lab").strip().lower()
+    resolved, _ = _resolve_explicit_endpoint(ep, mode)
+    return resolved
 
 
 async def add_endpoints(db: AsyncSession, campaign: Campaign, endpoints: list[str]) -> int:
