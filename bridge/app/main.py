@@ -433,6 +433,9 @@ class CallState:
     agent_config: dict = field(default_factory=dict)
     call_started_at: float = 0.0
     call_direction: str = "inbound"  # inbound | outbound
+    hangup_event: Optional[str] = None
+    hangup_cause: Optional[str] = None
+    hangup_cause_txt: Optional[str] = None
 
     # Buffered streaming transcriptions — flushed per turn / on call end
     user_tx_parts: list[str] = field(default_factory=list)
@@ -895,11 +898,13 @@ class GeminiLiveBridge:
             direction = "inbound"
             lead_id: Optional[int] = None
             dialed_endpoint: Optional[str] = None
+            campaign_lead_id: Optional[int] = None
             connect_experience = "auto_greeting"
             if pending:
                 agent_slug = pending.get("agent_slug") or agent_slug
                 lead_id = pending.get("lead_id")
                 dialed_endpoint = pending.get("endpoint")
+                campaign_lead_id = pending.get("campaign_lead_id")
                 direction = "outbound"
                 connect_experience = str(
                     pending.get("connect_experience") or "auto_greeting"
@@ -920,6 +925,7 @@ class GeminiLiveBridge:
                 direction=direction,
                 lead_id=lead_id,
                 dialed_endpoint=dialed_endpoint,
+                campaign_lead_id=campaign_lead_id,
             )
 
             inbound_ringback = use_inbound_ringback(direction)
@@ -1135,6 +1141,10 @@ class GeminiLiveBridge:
             return
 
         if channel_id == call.human_channel_id:
+            ch = event.get("channel", {}) or {}
+            call.state.hangup_event = "StasisEnd"
+            call.state.hangup_cause = str(ch.get("cause")) if ch.get("cause") is not None else None
+            call.state.hangup_cause_txt = ch.get("cause_txt")
             logger.info(
                 "Human channel ended: %s (cause=%s %s)",
                 channel_id,
@@ -1170,6 +1180,9 @@ class GeminiLiveBridge:
             channel.get("cause", "?"),
             channel.get("cause_txt", ""),
         )
+        call.state.hangup_event = "ChannelDestroyed"
+        call.state.hangup_cause = str(channel.get("cause")) if channel.get("cause") is not None else None
+        call.state.hangup_cause_txt = channel.get("cause_txt")
         await self.cleanup_call(call)
 
     async def _handle_channel_hangup_request(self, event: dict) -> None:
@@ -1193,6 +1206,9 @@ class GeminiLiveBridge:
             channel.get("cause", "?"),
             channel.get("cause_txt", ""),
         )
+        call.state.hangup_event = "ChannelHangupRequest"
+        call.state.hangup_cause = str(channel.get("cause")) if channel.get("cause") is not None else None
+        call.state.hangup_cause_txt = channel.get("cause_txt")
         await self.cleanup_call(call)
 
     async def _handle_channel_left_bridge(self, event: dict) -> None:
@@ -1299,6 +1315,7 @@ class GeminiLiveBridge:
         lead_id: Optional[int] = None,
         caller_id: Optional[str] = None,
         connect_experience: Optional[str] = None,
+        campaign_lead_id: Optional[int] = None,
     ) -> dict[str, Any]:
         """Originate an outbound call via ARI; StasisStart loads platform config."""
         if len(self._calls) >= self.max_concurrent_calls:
@@ -1338,6 +1355,7 @@ class GeminiLiveBridge:
             "endpoint": endpoint,
             "direction": "outbound",
             "connect_experience": (connect_experience or "auto_greeting"),
+            "campaign_lead_id": campaign_lead_id,
         }
         logger.info(
             "Originated outbound channel=%s agent=%s endpoint=%s lead=%s",
@@ -1359,6 +1377,7 @@ class GeminiLiveBridge:
         direction: str = "inbound",
         lead_id: Optional[int] = None,
         dialed_endpoint: Optional[str] = None,
+        campaign_lead_id: Optional[int] = None,
     ) -> None:
         """Load per-call agent config from the platform API."""
         state = call.state
@@ -1388,6 +1407,8 @@ class GeminiLiveBridge:
                 payload["lead_id"] = lead_id
             if dialed_endpoint:
                 payload["dialed_endpoint"] = dialed_endpoint
+            if campaign_lead_id is not None:
+                payload["campaign_lead_id"] = campaign_lead_id
             resp = await self.http.post(
                 f"{self.platform_url}/internal/calls/start",
                 json=payload,
@@ -1498,6 +1519,9 @@ class GeminiLiveBridge:
                 "rtp_out": call.state.rtp_out_frames,
                 "gemini_turns": call.state.gemini_turn_completes,
                 "interruptions": call.state.gemini_interruptions,
+                "hangup_event": call.state.hangup_event,
+                "hangup_cause": call.state.hangup_cause,
+                "hangup_cause_txt": call.state.hangup_cause_txt,
             },
             "token_usage": call.state.token_usage.to_dict(),
         }
@@ -2050,6 +2074,7 @@ class OriginateIn(BaseModel):
     lead_id: Optional[int] = None
     caller_id: Optional[str] = None
     connect_experience: Optional[str] = None
+    campaign_lead_id: Optional[int] = None
 
 
 def _verify_bridge_token(x_bridge_token: str = Header(..., alias="X-Bridge-Token")) -> None:
@@ -2069,6 +2094,7 @@ async def internal_originate(
         lead_id=body.lead_id,
         caller_id=body.caller_id,
         connect_experience=body.connect_experience,
+        campaign_lead_id=body.campaign_lead_id,
     )
 
 

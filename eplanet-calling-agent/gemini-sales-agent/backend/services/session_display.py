@@ -14,7 +14,11 @@ def format_endpoint_display(endpoint: str) -> str:
     if not ep:
         return ""
     if ep.upper().startswith("PJSIP/"):
-        return ep.split("/", 1)[-1]
+        val = ep.split("/", 1)[-1]
+        # Trunk endpoint: PJSIP/<number>@trunk_name -> display just number.
+        if "@" in val:
+            return val.split("@", 1)[0]
+        return val
     return ep
 
 
