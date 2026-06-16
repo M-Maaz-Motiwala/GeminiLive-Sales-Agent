@@ -73,6 +73,25 @@ TOOL_DECLARATIONS = [
         },
     },
     {
+        "name": "update_lead_details",
+        "description": "Update an existing lead when caller corrects name/email/phone/company.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "lead_id": {
+                    "type": "integer",
+                    "description": "Lead ID to update. Optional when source_session_id is available.",
+                },
+                "name": {"type": "string", "description": "Corrected full name"},
+                "email": {"type": "string", "description": "Corrected email address"},
+                "phone": {"type": "string", "description": "Corrected phone number"},
+                "company": {"type": "string", "description": "Corrected company name"},
+                "notes": {"type": "string", "description": "Additional corrected notes"},
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "create_note",
         "description": "Save a note during the conversation (action items, follow-ups, etc.).",
         "parameters": {
@@ -118,7 +137,11 @@ def get_tool_declarations(enabled_tools: list[str]) -> list[dict]:
     """Filter tool declarations to only those enabled for the agent."""
     if not enabled_tools:
         return []
-    return [t for t in TOOL_DECLARATIONS if t["name"] in enabled_tools]
+    names = set(enabled_tools)
+    # If agent can capture leads, also allow updating corrected details.
+    if "create_lead" in names:
+        names.add("update_lead_details")
+    return [t for t in TOOL_DECLARATIONS if t["name"] in names]
 
 
 async def dispatch(
@@ -146,6 +169,13 @@ async def dispatch(
 
         elif tool_name == "create_note":
             result = await crm_tools.create_note(db, params, session_id=session_id)
+
+        elif tool_name == "update_lead_details":
+            if session_id:
+                params["source_session_id"] = session_id
+            result = await crm_tools.update_lead_details(db, params)
+            if session_id and db and result.get("lead_id"):
+                await _attach_lead_to_session(db, session_id, result["lead_id"], params)
 
         elif tool_name == "update_lead_status":
             result = await crm_tools.update_lead_status(db, params)

@@ -1,4 +1,4 @@
-"""CRM tools — create_lead, search_contacts, create_note, update_lead_status."""
+"""CRM tools — create/search/update leads, notes, and statuses."""
 import logging
 from datetime import datetime, timezone
 
@@ -73,3 +73,41 @@ async def update_lead_status(db: AsyncSession, params: dict) -> dict:
         return {"error": f"Invalid status: {new_status}"}
     await db.flush()
     return {"status": "updated", "lead_id": lead.id, "new_status": lead.status}
+
+
+async def update_lead_details(db: AsyncSession, params: dict) -> dict:
+    """Update captured lead fields, usually after caller corrections."""
+    lead_id = params.get("lead_id")
+    source_session_id = params.get("source_session_id")
+
+    lead = None
+    if lead_id is not None:
+        result = await db.execute(select(Lead).where(Lead.id == lead_id))
+        lead = result.scalar_one_or_none()
+    elif source_session_id is not None:
+        result = await db.execute(
+            select(Lead)
+            .where(Lead.source_session_id == source_session_id)
+            .order_by(Lead.id.desc())
+            .limit(1)
+        )
+        lead = result.scalar_one_or_none()
+
+    if not lead:
+        return {"error": "Lead not found for update", "lead_id": lead_id}
+
+    changed: dict[str, str] = {}
+    for field in ("name", "email", "phone", "company", "notes"):
+        if field in params and params.get(field) is not None:
+            new_val = str(params.get(field)).strip()
+            old_val = getattr(lead, field)
+            if new_val != (old_val or ""):
+                setattr(lead, field, new_val)
+                changed[field] = new_val
+
+    await db.flush()
+    return {
+        "status": "updated",
+        "lead_id": lead.id,
+        "changed_fields": changed,
+    }

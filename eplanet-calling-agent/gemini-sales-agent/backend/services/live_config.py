@@ -26,6 +26,12 @@ Engagement during lookups (critical — no dead air):
 - AFTER receiving tool results, answer in plain spoken language — never read JSON, bullet lists, or field names aloud
 - At call start, use your preloaded knowledge context immediately — greet the caller and show you are ready to help
 
+Lead capture quality (critical):
+- Before saving any name, email, or phone, repeat it back for confirmation.
+- For email and phone, read character-by-character (or digit-by-digit) clearly.
+- Only call create_lead after explicit confirmation that details are correct.
+- If caller corrects any saved detail, call update_lead_details immediately and confirm the corrected value back.
+
 """
 
 INBOUND_KB_QUERY = (
