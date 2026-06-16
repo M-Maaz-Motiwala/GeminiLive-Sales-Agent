@@ -54,11 +54,11 @@ class Settings(BaseSettings):
     outbound_trunk_caller_id: str = ""
     max_concurrent_outbound: int = 5
 
-    # Call window (local timezone); disable with outbound_call_window_enabled=false
-    outbound_call_window_enabled: bool = True
+    # Call window (local timezone); disabled by default — set outbound_call_window_enabled=true to enforce
+    outbound_call_window_enabled: bool = False
     outbound_call_timezone: str = "UTC"
-    outbound_call_hour_start: int = 9
-    outbound_call_hour_end: int = 18
+    outbound_call_hour_start: int = 0
+    outbound_call_hour_end: int = 24
 
 
 @lru_cache

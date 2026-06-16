@@ -47,8 +47,13 @@ def within_call_window(now: Optional[datetime] = None) -> tuple[bool, str]:
     else:
         now = now.astimezone(tz)
 
-    start = time(settings.outbound_call_hour_start, 0)
-    end = time(settings.outbound_call_hour_end, 0)
+    start_h = settings.outbound_call_hour_start
+    end_h = settings.outbound_call_hour_end
+    if end_h >= 24:
+        end = time(23, 59, 59)
+    else:
+        end = time(end_h, 0)
+    start = time(start_h, 0)
     t = now.time()
 
     if start <= end:
