@@ -1,0 +1,1188 @@
+# Company Knowledge Base (Imported from knowledge_base.xlsx)
+
+## Services
+
+### Entry 1
+- ServiceName: Web Application Development
+- Category: Web
+- Description: Custom web apps built with React, Next.js, Vue, Django, and Node.js. From MVPs to enterprise SaaS platforms.
+- Technologies: React, Next.js, Vue.js, Django, Node.js, PostgreSQL, AWS
+- UseCases: SaaS platforms, customer portals, internal dashboards, booking systems, B2B tools
+- SuitableFor: Startups, SMEs, enterprises needing custom web solutions
+- StartingPrice: 2500
+- EstimatedTimeline: 4-12 weeks
+- Keywords: web app, website, react, frontend, dashboard, portal, saas
+
+### Entry 2
+- ServiceName: Mobile App Development
+- Category: Mobile
+- Description: iOS and Android apps built with React Native or Flutter. Native quality, cross-platform efficiency.
+- Technologies: React Native, Flutter, Swift, Kotlin, Firebase, AWS Amplify
+- UseCases: Consumer apps, field service apps, patient portals, e-commerce, food delivery
+- SuitableFor: Businesses needing iOS + Android coverage with one codebase
+- StartingPrice: 4000
+- EstimatedTimeline: 6-16 weeks
+- Keywords: mobile app, ios, android, react native, flutter, smartphone
+
+### Entry 3
+- ServiceName: UI/UX Design
+- Category: Design
+- Description: User research, wireframing, prototyping, and pixel-perfect Figma designs. Delivered as a design system.
+- Technologies: Figma, Adobe XD, Principle, Hotjar, Maze
+- UseCases: Product redesign, new product design, design system creation, user research
+- SuitableFor: Companies wanting strong brand identity and conversion-optimized interfaces
+- StartingPrice: 800
+- EstimatedTimeline: 1-4 weeks
+- Keywords: ui, ux, design, figma, wireframe, prototype, branding
+
+### Entry 4
+- ServiceName: Custom ERP / CRM Development
+- Category: Enterprise
+- Description: Bespoke ERP and CRM solutions replacing off-the-shelf software. Built for your exact workflow.
+- Technologies: Django, .NET, PostgreSQL, React, REST APIs, third-party integrations
+- UseCases: HR management, inventory tracking, sales pipeline, project management, billing
+- SuitableFor: Mid-size to enterprise businesses needing custom workflow automation
+- StartingPrice: 8000
+- EstimatedTimeline: 12-24 weeks
+- Keywords: erp, crm, enterprise, workflow, automation, hr, inventory
+
+### Entry 5
+- ServiceName: AI / ML Integration
+- Category: AI
+- Description: Custom AI features: chatbots, recommendation engines, document parsing, predictive analytics, voice AI.
+- Technologies: Python, LangChain, OpenAI, Gemini, Hugging Face, FastAPI, ChromaDB
+- UseCases: AI sales agents, document Q&A, demand forecasting, fraud detection, image classification
+- SuitableFor: Businesses wanting to embed AI into existing products or build AI-native apps
+- StartingPrice: 5000
+- EstimatedTimeline: 4-12 weeks
+- Keywords: ai, machine learning, chatbot, llm, openai, nlp, recommendation engine
+
+### Entry 6
+- ServiceName: SaaS Product Development
+- Category: SaaS
+- Description: End-to-end SaaS product: architecture, multi-tenancy, billing (Stripe), onboarding, and admin dashboard.
+- Technologies: Next.js, Django, Stripe, Auth0, PostgreSQL, Docker, AWS/GCP
+- UseCases: Subscription platforms, B2B tools, marketplace products, vertical SaaS
+- SuitableFor: Entrepreneurs and companies launching a software product
+- StartingPrice: 10000
+- EstimatedTimeline: 12-20 weeks
+- Keywords: saas, subscription, multi-tenant, stripe, product, startup
+
+### Entry 7
+- ServiceName: E-commerce Development
+- Category: E-commerce
+- Description: Custom e-commerce stores or headless commerce with Shopify/WooCommerce integration or fully custom.
+- Technologies: Shopify, WooCommerce, Next.js, Stripe, PayPal, Algolia, custom checkout
+- UseCases: Online stores, B2B portals, dropshipping, multi-vendor marketplaces
+- SuitableFor: Retail brands, D2C companies, marketplace builders
+- StartingPrice: 2000
+- EstimatedTimeline: 3-10 weeks
+- Keywords: ecommerce, shopify, woocommerce, store, marketplace, cart, payment
+
+### Entry 8
+- ServiceName: DevOps & Cloud Infrastructure
+- Category: DevOps
+- Description: CI/CD pipelines, containerization (Docker/Kubernetes), cloud setup (AWS/GCP/Azure), monitoring.
+- Technologies: AWS, GCP, Azure, Docker, Kubernetes, Terraform, GitHub Actions, Datadog
+- UseCases: Server setup, auto-scaling, deployment automation, cost optimization
+- SuitableFor: Engineering teams needing infrastructure help or production-grade DevOps
+- StartingPrice: 1500
+- EstimatedTimeline: 1-4 weeks
+- Keywords: devops, cloud, aws, gcp, docker, kubernetes, deployment, ci/cd
+
+### Entry 9
+- ServiceName: API Development & Integration
+- Category: Backend
+- Description: REST and GraphQL APIs, third-party integrations (Stripe, Twilio, HubSpot, etc.), microservices.
+- Technologies: FastAPI, Django REST, Node.js, GraphQL, OAuth2, Webhooks
+- UseCases: Backend for mobile apps, connecting to third-party services, microservices architecture
+- SuitableFor: Teams needing backend APIs or integration work
+- StartingPrice: 1500
+- EstimatedTimeline: 2-6 weeks
+- Keywords: api, rest, graphql, backend, integration, microservices, stripe, twilio
+
+### Entry 10
+- ServiceName: Staff Augmentation
+- Category: Talent
+- Description: Dedicated remote developers embedded in your team. Screened, vetted talent for React, Python, Flutter, AI.
+- Technologies: Any stack - we match by your requirements
+- UseCases: Scaling engineering capacity, filling skill gaps, fractional CTO
+- SuitableFor: Companies with existing teams needing additional bandwidth
+- StartingPrice: 2500
+- EstimatedTimeline: Ongoing (monthly)
+- Keywords: staff augmentation, dedicated developer, remote team, outsourcing
+
+### Entry 11
+- ServiceName: MVP Development
+- Category: Startup
+- Description: Lean, fast MVP development - core features only, shipped in 6-8 weeks. Ideal for pre-seed startups.
+- Technologies: React, Django/FastAPI, Firebase, Supabase (chosen for speed)
+- UseCases: Product validation, investor demo, market testing
+- SuitableFor: Pre-seed and seed-stage founders with a tight timeline
+- StartingPrice: 3000
+- EstimatedTimeline: 4-8 weeks
+- Keywords: mvp, startup, prototype, validation, founder, fast
+
+### Entry 12
+- ServiceName: Product Maintenance & Support
+- Category: Support
+- Description: Ongoing bug fixes, security patches, performance improvements, and feature additions post-launch.
+- Technologies: Depends on existing stack
+- UseCases: Post-launch support, SLA agreements, continuous improvement
+- SuitableFor: Businesses with a live product needing dedicated support
+- StartingPrice: 500
+- EstimatedTimeline: Ongoing (monthly retainer)
+- Keywords: maintenance, support, bugs, sla, retainer, post-launch
+
+## Packages
+
+### Entry 1
+- PackageName: Starter Web
+- PackageTier: Basic
+- ServiceType: Web Application
+- Price: 2500
+- Features: Up to 8 pages, responsive design, basic contact form, CMS integration
+- IncludedItems: UI design, frontend dev, basic SEO, 1 month support
+- DeliveryTime: 4-5 weeks
+- Revisions: 2
+- BestFor: Small businesses, landing pages
+- Notes: WordPress or static site
+
+### Entry 2
+- PackageName: Professional Web
+- PackageTier: Standard
+- ServiceType: Web Application
+- Price: 6500
+- Features: Custom web app, user auth, admin panel, third-party API integration, database
+- IncludedItems: UI/UX, full-stack dev, API, deployment, 2 months support
+- DeliveryTime: 8-10 weeks
+- Revisions: 3
+- BestFor: SME portals, booking systems, dashboards
+- Notes: React + Django/Node
+
+### Entry 3
+- PackageName: Enterprise Web
+- PackageTier: Premium
+- ServiceType: Web Application
+- Price: 15000
+- Features: Complex multi-role web app, microservices, payment integration, analytics, CI/CD
+- IncludedItems: Full team: PM, UI/UX, 2 devs, QA, DevOps, 3 months support
+- DeliveryTime: 12-16 weeks
+- Revisions: 5
+- BestFor: Enterprise portals, SaaS, marketplace
+- Notes: Custom quote available for very large scope
+
+### Entry 4
+- PackageName: Starter Mobile
+- PackageTier: Basic
+- ServiceType: Mobile App Development
+- Price: 4500
+- Features: iOS + Android (React Native), 5 screens, user auth, push notifications
+- IncludedItems: UI design, dev, App Store + Play Store submission, 1 month support
+- DeliveryTime: 6-8 weeks
+- Revisions: 2
+- BestFor: Simple utility apps, MVPs
+- Notes: No complex backend - uses Firebase
+
+### Entry 5
+- PackageName: Pro Mobile
+- PackageTier: Standard
+- ServiceType: Mobile App Development
+- Price: 10000
+- Features: iOS + Android, 10-15 screens, custom backend, payments, maps, analytics
+- IncludedItems: Full UI/UX, dev, API, App Store submission, 2 months support
+- DeliveryTime: 10-14 weeks
+- Revisions: 3
+- BestFor: Consumer apps, on-demand, marketplace
+- Notes: React Native or Flutter
+
+### Entry 6
+- PackageName: Enterprise Mobile
+- PackageTier: Premium
+- ServiceType: Mobile App Development
+- Price: 22000
+- Features: Complex iOS + Android, offline mode, real-time, biometrics, complex integrations
+- IncludedItems: Full team, QA, DevOps, 3 months support, app store optimization
+- DeliveryTime: 14-20 weeks
+- Revisions: 5
+- BestFor: Healthcare, fintech, logistics apps
+- Notes: Custom quote for native Swift/Kotlin
+
+### Entry 7
+- PackageName: Design Audit
+- PackageTier: Basic
+- ServiceType: UI/UX Design
+- Price: 800
+- Features: Review of existing UI, usability issues report, 10 redesign recommendations
+- IncludedItems: PDF report, priority fixes roadmap
+- DeliveryTime: 1 week
+- Revisions: 1
+- BestFor: Products that need UX improvement
+
+### Entry 8
+- PackageName: Product Design
+- PackageTier: Standard
+- ServiceType: UI/UX Design
+- Price: 3500
+- Features: Full Figma design system, wireframes, hi-fi mockups, interactive prototype
+- IncludedItems: User research, wireframes, 3 design concepts, final Figma files
+- DeliveryTime: 3-4 weeks
+- Revisions: 3
+- BestFor: New product design, rebranding
+
+### Entry 9
+- PackageName: ERP Starter
+- PackageTier: Basic
+- ServiceType: ERP/CRM Development
+- Price: 8000
+- Features: Core modules: HR, inventory, basic reporting
+- IncludedItems: Requirements, design, dev, UAT, 2 months support
+- DeliveryTime: 12-16 weeks
+- Revisions: 3
+- BestFor: SMEs needing to replace spreadsheets
+
+### Entry 10
+- PackageName: ERP Enterprise
+- PackageTier: Premium
+- ServiceType: ERP/CRM Development
+- Price: 25000
+- Features: Full ERP: HR, payroll, inventory, finance, CRM, multi-branch, reporting
+- IncludedItems: Full team, custom workflows, training, 6 months support
+- DeliveryTime: 20-28 weeks
+- Revisions: 5
+- BestFor: Mid-size to large enterprise
+- Notes: Custom quote for >200 users
+
+### Entry 11
+- PackageName: AI Chatbot
+- PackageTier: Basic
+- ServiceType: AI/ML Integration
+- Price: 5000
+- Features: RAG-powered chatbot on your documents, web/API integration
+- IncludedItems: Knowledge base setup, chat UI, API, 1 month support
+- DeliveryTime: 4-6 weeks
+- Revisions: 2
+- BestFor: Customer support automation, FAQs
+- Notes: Uses OpenAI or Gemini by default
+
+### Entry 12
+- PackageName: AI Custom Solution
+- PackageTier: Premium
+- ServiceType: AI/ML Integration
+- Price: 15000
+- Features: Custom ML model, data pipeline, training, inference API, dashboard
+- IncludedItems: Full AI team, model training, deployment, monitoring, 3 months support
+- DeliveryTime: 8-16 weeks
+- Revisions: 3
+- BestFor: Predictive analytics, vision AI, NLP
+
+### Entry 13
+- PackageName: SaaS MVP
+- PackageTier: Standard
+- ServiceType: SaaS Product Development
+- Price: 12000
+- Features: Multi-tenant SaaS, Stripe billing, user management, admin panel, onboarding
+- IncludedItems: Full-stack dev, DevOps, Stripe integration, 2 months support
+- DeliveryTime: 12-16 weeks
+- Revisions: 3
+- BestFor: B2B SaaS startups
+
+### Entry 14
+- PackageName: E-commerce Starter
+- PackageTier: Basic
+- ServiceType: E-commerce Development
+- Price: 2000
+- Features: Shopify or WooCommerce store, 20 products, payment gateway, order management
+- IncludedItems: Setup, theme customization, payment, 1 month support
+- DeliveryTime: 3-4 weeks
+- Revisions: 2
+- BestFor: Small online stores
+
+### Entry 15
+- PackageName: E-commerce Custom
+- PackageTier: Premium
+- ServiceType: E-commerce Development
+- Price: 9000
+- Features: Fully custom headless commerce, multi-vendor, custom checkout, analytics
+- IncludedItems: UI/UX, full-stack dev, API integrations, 2 months support
+- DeliveryTime: 8-12 weeks
+- Revisions: 4
+- BestFor: Marketplace, D2C brands
+
+### Entry 16
+- PackageName: Launch Fast MVP
+- PackageTier: Standard
+- ServiceType: MVP Development
+- Price: 5000
+- Features: Core feature set only, web or mobile, user auth, basic analytics
+- IncludedItems: PM, dev, basic UI, deployment, 1 month support
+- DeliveryTime: 6-8 weeks
+- Revisions: 2
+- BestFor: Pre-seed startups, idea validation
+- Notes: Scope must be clearly defined upfront
+
+### Entry 17
+- PackageName: Basic Retainer
+- PackageTier: Basic
+- ServiceType: Maintenance & Support
+- Price: 500
+- Features: 20 hours/month: bug fixes, minor updates, security patches
+- IncludedItems: Monthly report, priority support
+- DeliveryTime: Ongoing (monthly)
+- Revisions: 0
+- BestFor: Small live products
+
+### Entry 18
+- PackageName: Pro Retainer
+- PackageTier: Standard
+- ServiceType: Maintenance & Support
+- Price: 1500
+- Features: 60 hours/month: bug fixes, feature additions, performance tuning, monitoring
+- IncludedItems: Monthly report, Slack access, 48h SLA
+- DeliveryTime: Ongoing (monthly)
+- Revisions: 0
+- BestFor: Active SaaS or marketplace
+
+### Entry 19
+- PackageName: Dedicated Developer
+- PackageTier: Monthly
+- ServiceType: Staff Augmentation
+- Price: 2500
+- Features: 1 dedicated full-stack or specialized developer, 160 hours/month
+- IncludedItems: Daily standup, weekly report, Slack, Git access
+- DeliveryTime: Ongoing
+- Revisions: 0
+- BestFor: Scaling engineering teams
+- Notes: Senior developer: +$800/month
+
+### Entry 20
+- PackageName: Dedicated Team
+- PackageTier: Monthly
+- ServiceType: Staff Augmentation
+- Price: 7500
+- Features: 3-person team (2 devs + PM), 480 hours/month
+- IncludedItems: PM, sprint management, daily standups, bi-weekly demos
+- DeliveryTime: Ongoing
+- Revisions: 0
+- BestFor: Companies outsourcing full delivery
+- Notes: Custom team composition available
+
+## Pricing
+
+### Entry 1
+- PackageName: Starter Web
+- ServiceType: Web Application
+- BasePrice: 2500
+- Currency: USD
+- BillingType: Fixed
+- DiscountEligible: No
+- CustomQuoteAllowed: No
+
+### Entry 2
+- PackageName: Professional Web
+- ServiceType: Web Application
+- BasePrice: 6500
+- Currency: USD
+- BillingType: Fixed
+- DiscountEligible: Yes
+- CustomQuoteAllowed: Yes
+- Notes: +$500 for custom backend integrations
+
+### Entry 3
+- PackageName: Enterprise Web
+- ServiceType: Web Application
+- BasePrice: 15000
+- Currency: USD
+- BillingType: Fixed/Milestone
+- DiscountEligible: Yes
+- CustomQuoteAllowed: Yes
+- Notes: Final price after scope review
+
+### Entry 4
+- PackageName: Starter Mobile
+- ServiceType: Mobile App
+- BasePrice: 4500
+- Currency: USD
+- BillingType: Fixed
+- DiscountEligible: No
+- CustomQuoteAllowed: No
+
+### Entry 5
+- PackageName: Pro Mobile
+- ServiceType: Mobile App
+- BasePrice: 10000
+- Currency: USD
+- BillingType: Milestone
+- DiscountEligible: Yes
+- CustomQuoteAllowed: Yes
+- Notes: 3 milestones: 40% - 40% - 20%
+
+### Entry 6
+- PackageName: Enterprise Mobile
+- ServiceType: Mobile App
+- BasePrice: 22000
+- Currency: USD
+- BillingType: Milestone
+- DiscountEligible: Yes
+- CustomQuoteAllowed: Yes
+
+### Entry 7
+- PackageName: Design Audit
+- ServiceType: UI/UX Design
+- BasePrice: 800
+- Currency: USD
+- BillingType: Fixed
+- DiscountEligible: No
+- CustomQuoteAllowed: No
+
+### Entry 8
+- PackageName: Product Design
+- ServiceType: UI/UX Design
+- BasePrice: 3500
+- Currency: USD
+- BillingType: Fixed
+- DiscountEligible: Yes
+- CustomQuoteAllowed: No
+
+### Entry 9
+- PackageName: ERP Starter
+- ServiceType: ERP/CRM
+- BasePrice: 8000
+- Currency: USD
+- BillingType: Milestone
+- DiscountEligible: Yes
+- CustomQuoteAllowed: Yes
+
+### Entry 10
+- PackageName: ERP Enterprise
+- ServiceType: ERP/CRM
+- BasePrice: 25000
+- Currency: USD
+- BillingType: Milestone
+- DiscountEligible: Yes
+- CustomQuoteAllowed: Yes
+- Notes: Requires detailed requirements
+
+### Entry 11
+- PackageName: AI Chatbot
+- ServiceType: AI/ML
+- BasePrice: 5000
+- Currency: USD
+- BillingType: Fixed
+- DiscountEligible: Yes
+- CustomQuoteAllowed: Yes
+
+### Entry 12
+- PackageName: AI Custom Solution
+- ServiceType: AI/ML
+- BasePrice: 15000
+- Currency: USD
+- BillingType: Milestone
+- DiscountEligible: Yes
+- CustomQuoteAllowed: Yes
+
+### Entry 13
+- PackageName: SaaS MVP
+- ServiceType: SaaS
+- BasePrice: 12000
+- Currency: USD
+- BillingType: Milestone
+- DiscountEligible: Yes
+- CustomQuoteAllowed: Yes
+
+### Entry 14
+- PackageName: E-commerce Starter
+- ServiceType: E-commerce
+- BasePrice: 2000
+- Currency: USD
+- BillingType: Fixed
+- DiscountEligible: No
+- CustomQuoteAllowed: No
+
+### Entry 15
+- PackageName: E-commerce Custom
+- ServiceType: E-commerce
+- BasePrice: 9000
+- Currency: USD
+- BillingType: Milestone
+- DiscountEligible: Yes
+- CustomQuoteAllowed: Yes
+
+### Entry 16
+- PackageName: Launch Fast MVP
+- ServiceType: MVP
+- BasePrice: 5000
+- Currency: USD
+- BillingType: Fixed
+- DiscountEligible: Yes
+- CustomQuoteAllowed: No
+
+### Entry 17
+- PackageName: Basic Retainer
+- ServiceType: Maintenance
+- BasePrice: 500
+- Currency: USD
+- BillingType: Monthly
+- DiscountEligible: Yes
+- CustomQuoteAllowed: No
+- Notes: 3+ months = 10% discount
+
+### Entry 18
+- PackageName: Pro Retainer
+- ServiceType: Maintenance
+- BasePrice: 1500
+- Currency: USD
+- BillingType: Monthly
+- DiscountEligible: Yes
+- CustomQuoteAllowed: No
+
+### Entry 19
+- PackageName: Dedicated Developer
+- ServiceType: Staff Augmentation
+- BasePrice: 2500
+- Currency: USD
+- BillingType: Monthly
+- DiscountEligible: Yes
+- CustomQuoteAllowed: Yes
+- Notes: Senior: +$800/month
+
+### Entry 20
+- PackageName: Dedicated Team
+- ServiceType: Staff Augmentation
+- BasePrice: 7500
+- Currency: USD
+- BillingType: Monthly
+- DiscountEligible: Yes
+- CustomQuoteAllowed: Yes
+
+## Revisions
+
+### Entry 1
+- PackageName: Starter Web
+- IncludedRevisions: 2
+- ExtraRevisionCost: $150/round
+- RevisionTerms: Revisions must be requested within 30 days of delivery. Each revision round = one set of consolidated feedback.
+
+### Entry 2
+- PackageName: Professional Web
+- IncludedRevisions: 3
+- ExtraRevisionCost: $200/round
+- RevisionTerms: Same as above. Scope changes beyond original spec are billed as change requests.
+
+### Entry 3
+- PackageName: Enterprise Web
+- IncludedRevisions: 5
+- ExtraRevisionCost: $300/round
+- RevisionTerms: Structured via formal change request process with written approval.
+
+### Entry 4
+- PackageName: Starter Mobile
+- IncludedRevisions: 2
+- ExtraRevisionCost: $200/round
+- RevisionTerms: Design revisions before final development lock-in. Post-launch changes billed separately.
+
+### Entry 5
+- PackageName: Pro Mobile
+- IncludedRevisions: 3
+- ExtraRevisionCost: $250/round
+
+### Entry 6
+- PackageName: Enterprise Mobile
+- IncludedRevisions: 5
+- ExtraRevisionCost: $400/round
+
+### Entry 7
+- PackageName: Design Audit
+- IncludedRevisions: 1
+- ExtraRevisionCost: $100/round
+- RevisionTerms: One revision of the report recommendations included.
+
+### Entry 8
+- PackageName: Product Design
+- IncludedRevisions: 3
+- ExtraRevisionCost: $150/round
+
+### Entry 9
+- PackageName: ERP Starter
+- IncludedRevisions: 3
+- ExtraRevisionCost: $300/round
+- RevisionTerms: Post-UAT changes billed as change requests.
+
+### Entry 10
+- PackageName: AI Chatbot
+- IncludedRevisions: 2
+- ExtraRevisionCost: $200/round
+- RevisionTerms: Knowledge base updates are free; UI/behavior changes count as revisions.
+
+## PaymentMethods
+
+### Entry 1
+- PaymentMethod: 50/50 Split
+- Description: 50% advance, 50% on final delivery
+- AdvancePercent: 50.0
+- InstallmentsAllowed: No
+- FinalDeliveryTerms: Before source code handover
+
+### Entry 2
+- PaymentMethod: 30/40/30 Milestones
+- Description: 30% advance -> 40% mid-project -> 30% on delivery. Recommended for projects over $5,000.
+- AdvancePercent: 30.0
+- MilestoneTerms: Milestones defined in SOW
+- InstallmentsAllowed: Yes
+- FinalDeliveryTerms: Before source code + deployment
+
+### Entry 3
+- PaymentMethod: Monthly Retainer
+- Description: Fixed monthly fee for ongoing work. Billed on the 1st of each month.
+- AdvancePercent: 100.0
+- InstallmentsAllowed: No
+- FinalDeliveryTerms: Ongoing
+
+### Entry 4
+- PaymentMethod: Custom Milestones
+- Description: Multi-phase project with milestones defined per delivery sprint. For enterprise projects.
+- AdvancePercent: 25.0
+- MilestoneTerms: Custom - agreed in SOW
+- InstallmentsAllowed: Yes
+- FinalDeliveryTerms: Before final deployment and source handover
+
+### Entry 5
+- PaymentMethod: Wire Transfer / Bank
+- Description: Bank wire transfer (USD preferred). Details provided on invoice.
+- InstallmentsAllowed: Yes
+- FinalDeliveryTerms: Per agreed schedule
+
+### Entry 6
+- PaymentMethod: PayPal / Payoneer
+- Description: Supported for payments up to $5,000. Higher amounts prefer wire.
+- InstallmentsAllowed: Yes
+- FinalDeliveryTerms: Per agreed schedule
+
+## AddOns
+
+### Entry 1
+- AddOnName: SEO Optimization
+- ServiceType: Web Application
+- Description: On-page SEO: meta tags, structured data, sitemap, page speed optimization
+- AdditionalCost: 500
+- Notes: Includes Google Analytics + Search Console setup
+
+### Entry 2
+- AddOnName: Multilingual Support
+- ServiceType: Web Application
+- Description: Add i18n (internationalization) - up to 3 languages
+- AdditionalCost: 800
+- Notes: RTL languages (Arabic, Urdu) add +$300
+
+### Entry 3
+- AddOnName: CMS Integration
+- ServiceType: Web Application
+- Description: Connect a headless CMS (Contentful, Strapi, or Sanity) for content management
+- AdditionalCost: 600
+
+### Entry 4
+- AddOnName: Push Notifications
+- ServiceType: Mobile App Development
+- Description: FCM-based push notifications with segmentation and analytics
+- AdditionalCost: 400
+
+### Entry 5
+- AddOnName: Offline Mode
+- ServiceType: Mobile App Development
+- Description: Local SQLite caching, offline data sync when connectivity restored
+- AdditionalCost: 1200
+- Notes: Requires backend support
+
+### Entry 6
+- AddOnName: Biometric Authentication
+- ServiceType: Mobile App Development
+- Description: Face ID / Touch ID login for iOS + Android
+- AdditionalCost: 500
+
+### Entry 7
+- AddOnName: Payment Gateway
+- ServiceType: E-commerce Development
+- Description: Stripe, PayPal, or local gateway integration with webhook handling
+- AdditionalCost: 600
+- Notes: Basic Stripe already included in most packages
+
+### Entry 8
+- AddOnName: AI Product Recommendations
+- ServiceType: E-commerce Development
+- Description: ML-based product recommendation engine on the product detail page
+- AdditionalCost: 2500
+
+### Entry 9
+- AddOnName: Analytics Dashboard
+- ServiceType: Any
+- Description: Custom analytics dashboard with charts, KPIs, and export (CSV/PDF)
+- AdditionalCost: 1500
+
+### Entry 10
+- AddOnName: HIPAA / GDPR Compliance Package
+- ServiceType: Any
+- Description: Audit, data encryption at rest, access control, consent management, audit logs
+- AdditionalCost: 2000
+- Notes: Required for healthcare (HIPAA) or EU clients (GDPR)
+
+### Entry 11
+- AddOnName: Video Calling / WebRTC
+- ServiceType: Web/Mobile
+- Description: 1-to-1 and group video calling using Daily.co or Agora SDK
+- AdditionalCost: 2500
+
+### Entry 12
+- AddOnName: White-Label Option
+- ServiceType: SaaS
+- Description: Custom branding per tenant - logo, colors, domain, email templates
+- AdditionalCost: 3000
+
+### Entry 13
+- AddOnName: AI Chatbot (Support)
+- ServiceType: Any
+- Description: RAG-powered support chatbot on your product docs or knowledge base
+- AdditionalCost: 3000
+
+### Entry 14
+- AddOnName: Hosting & Deployment Setup
+- ServiceType: Any
+- Description: AWS/GCP setup, domain, SSL, CI/CD pipeline, monitoring (Datadog/Sentry)
+- AdditionalCost: 800
+- Notes: Ongoing hosting cost paid by client
+
+### Entry 15
+- AddOnName: Extended Support (3 months)
+- ServiceType: Any
+- Description: 3 months of post-launch priority support beyond standard inclusion
+- AdditionalCost: 1200
+
+## DeliveryTime
+
+### Entry 1
+- ServiceType: Web Application (Basic)
+- MinWeeks: 4
+- MaxWeeks: 5
+- FastTrackAvailable: No
+
+### Entry 2
+- ServiceType: Web Application (Standard)
+- MinWeeks: 8
+- MaxWeeks: 10
+- FastTrackAvailable: Yes
+- FastTrackSurcharge: 20%
+- Notes: Fast track reduces timeline by ~30%
+
+### Entry 3
+- ServiceType: Web Application (Enterprise)
+- MinWeeks: 12
+- MaxWeeks: 16
+- FastTrackAvailable: Yes
+- FastTrackSurcharge: 25%
+
+### Entry 4
+- ServiceType: Mobile App (Basic)
+- MinWeeks: 6
+- MaxWeeks: 8
+- FastTrackAvailable: No
+
+### Entry 5
+- ServiceType: Mobile App (Standard)
+- MinWeeks: 10
+- MaxWeeks: 14
+- FastTrackAvailable: Yes
+- FastTrackSurcharge: 20%
+
+### Entry 6
+- ServiceType: Mobile App (Enterprise)
+- MinWeeks: 14
+- MaxWeeks: 20
+- FastTrackAvailable: Yes
+- FastTrackSurcharge: 25%
+
+### Entry 7
+- ServiceType: UI/UX Design
+- MinWeeks: 1
+- MaxWeeks: 4
+- FastTrackAvailable: Yes
+- FastTrackSurcharge: 30%
+
+### Entry 8
+- ServiceType: ERP/CRM (Starter)
+- MinWeeks: 12
+- MaxWeeks: 16
+- FastTrackAvailable: No
+- Notes: Not recommended - complex systems need time
+
+### Entry 9
+- ServiceType: ERP/CRM (Enterprise)
+- MinWeeks: 20
+- MaxWeeks: 28
+- FastTrackAvailable: No
+
+### Entry 10
+- ServiceType: AI/ML (Chatbot)
+- MinWeeks: 4
+- MaxWeeks: 6
+- FastTrackAvailable: Yes
+- FastTrackSurcharge: 20%
+
+### Entry 11
+- ServiceType: AI/ML (Custom)
+- MinWeeks: 8
+- MaxWeeks: 16
+- FastTrackAvailable: No
+- Notes: Depends on data readiness and model complexity
+
+### Entry 12
+- ServiceType: E-commerce
+- MinWeeks: 3
+- MaxWeeks: 10
+- FastTrackAvailable: Yes
+- FastTrackSurcharge: 15%
+
+## Discounts
+
+### Entry 1
+- DiscountName: Returning Client Discount
+- Condition: 2nd+ project with Trango Tech
+- DiscountPercent: 10
+- ApplicableTo: All fixed-price packages
+- Terms: Applied automatically upon verification
+
+### Entry 2
+- DiscountName: Long-Term Retainer
+- Condition: Sign a 6+ month retainer upfront
+- DiscountPercent: 15
+- ApplicableTo: Maintenance & Staff Augmentation
+- Terms: Full prepayment required for 6-month term
+
+### Entry 3
+- DiscountName: Bundle Discount
+- Condition: Two or more services contracted together (e.g. web + mobile)
+- DiscountPercent: 12
+- ApplicableTo: Any combination of packages
+- Terms: Applied to the lower-value service
+
+### Entry 4
+- DiscountName: Startup Discount
+- Condition: Pre-seed or seed-stage startup with < $500K raised
+- DiscountPercent: 15
+- ApplicableTo: MVP and Starter packages only
+- Terms: Requires startup documentation
+
+### Entry 5
+- DiscountName: Referral Credit
+- Condition: Refer a client who signs a contract
+- DiscountPercent: 8
+- ApplicableTo: Your next invoice
+- Terms: Applied as credit, not cash
+
+### Entry 6
+- DiscountName: Non-profit Discount
+- Condition: Registered 501(c)(3) or equivalent charity
+- DiscountPercent: 20
+- ApplicableTo: All packages
+- Terms: Requires proof of non-profit status
+
+### Entry 7
+- DiscountName: Fast Decision Discount
+- Condition: Contract signed within 48 hours of proposal
+- DiscountPercent: 5
+- ApplicableTo: Projects under $20,000
+- Terms: One-time, first project only
+
+### Entry 8
+- DiscountName: Annual Maintenance
+- Condition: Pay 12 months maintenance upfront
+- DiscountPercent: 15
+- ApplicableTo: Maintenance retainers
+- Terms: No refund for unused months
+
+## FAQs
+
+### Entry 1
+- Category: Process
+- Question: How does the project process work?
+- Answer: We follow 5 stages: Discovery (requirements & scope) -> Design (UI/UX) -> Development (sprints) -> QA Testing -> Launch & Handover. You get a dedicated PM as your single point of contact throughout.
+
+### Entry 2
+- Category: Process
+- Question: What do you need from me to start?
+- Answer: A kick-off call, your requirements document (or we help you create one), and the first payment milestone. We can start within 5 business days of signing.
+
+### Entry 3
+- Category: Process
+- Question: Will I own the source code?
+- Answer: Yes, 100%. Full source code ownership is transferred to you upon final payment. All work is done under a Work-For-Hire agreement.
+
+### Entry 4
+- Category: Process
+- Question: Do you sign an NDA?
+- Answer: Absolutely. We sign an NDA before any project details are shared. Our standard NDA is mutual and can be reviewed by your legal team.
+
+### Entry 5
+- Category: Pricing
+- Question: Why does software development cost so much?
+- Answer: You're not just paying for code - you're paying for a team of specialists (PM, designer, 1-2 developers, QA engineer), process discipline, documentation, and long-term quality. Cheap development always costs more in the long run through rewrites and bugs.
+
+### Entry 6
+- Category: Pricing
+- Question: Can I get a cheaper price?
+- Answer: We don't compromise on quality, but we can reduce scope. Let's identify which features are core for v1 and build from there. We also offer startup and bundle discounts.
+
+### Entry 7
+- Category: Pricing
+- Question: How do payment milestones work?
+- Answer: For projects over $5,000, we use a 30/40/30 split: 30% to start, 40% at mid-project review, 30% on final delivery. This protects both sides.
+
+### Entry 8
+- Category: Pricing
+- Question: What if the project scope grows?
+- Answer: New features beyond the original scope are handled via formal Change Requests (CR). Each CR is quoted separately and requires written approval before work begins.
+
+### Entry 9
+- Category: Quality
+- Question: How do you ensure quality?
+- Answer: Every project has a dedicated QA engineer who tests on multiple browsers/devices. We use automated testing for critical flows and manual testing for UX. You also get a UAT (user acceptance testing) phase before final delivery.
+
+### Entry 10
+- Category: Quality
+- Question: What if I find bugs after launch?
+- Answer: All plans include a support period (1-3 months) for bug fixes at no extra cost. After that, we recommend a maintenance retainer starting at $500/month.
+
+### Entry 11
+- Category: Timeline
+- Question: Can you deliver faster?
+- Answer: Yes - we offer a Fast Track option for most packages that reduces timeline by ~30% for a 15-30% surcharge. This requires a dedicated team and priority scheduling.
+
+### Entry 12
+- Category: Timeline
+- Question: What causes delays?
+- Answer: The most common delay cause is slow client feedback. We need timely approval at each stage. A dedicated Slack channel with a maximum 24-hour response time from your side keeps us on schedule.
+
+### Entry 13
+- Category: Post-Launch
+- Question: Can you help maintain the product after launch?
+- Answer: Yes. We offer Basic ($500/month, 20 hours) and Pro ($1,500/month, 60 hours) retainers. We can be your ongoing engineering team.
+
+### Entry 14
+- Category: Post-Launch
+- Question: Do you do staff augmentation?
+- Answer: Yes. We provide dedicated remote developers starting at $2,500/month for a full-time senior engineer. They work in your timezone, attend your standups, and use your tools.
+
+### Entry 15
+- Category: Tech
+- Question: What technologies do you use?
+- Answer: For web: React, Next.js, Django, Node.js. For mobile: React Native, Flutter. For AI: Python, LangChain, OpenAI, Gemini. For cloud: AWS, GCP, Docker, Kubernetes. We always recommend the best tech for your specific use case.
+
+### Entry 16
+- Category: Tech
+- Question: Can you work with our existing codebase?
+- Answer: Yes. We do code audits, refactoring, and feature additions on existing projects. We'll assess the codebase first and give you an honest evaluation.
+
+### Entry 17
+- Category: Tech
+- Question: Do you do WordPress sites?
+- Answer: Yes, for basic websites. For custom web applications, we use modern frameworks instead. WordPress works well for content-heavy sites but not for complex apps.
+
+### Entry 18
+- Category: Communication
+- Question: How do we communicate during the project?
+- Answer: You get a dedicated Slack channel with your PM and team, weekly progress videos, bi-weekly demos, and access to your project board (Jira or Trello). You're never left in the dark.
+
+### Entry 19
+- Category: Communication
+- Question: What timezone are you in?
+- Answer: Our core team is in Pakistan (PKT, UTC+5). We have team members in Europe and the US for client support. We accommodate client timezone overlaps of 3-4 hours per day minimum.
+
+### Entry 20
+- Category: Communication
+- Question: Can I book a free consultation?
+- Answer: Yes! We offer a free 30-minute discovery call with a senior sales consultant. No hard sell - just an honest conversation about your project. Book via our website or reply to this chat.
+
+### Entry 21
+- Category: Legal
+- Question: Where is Trango Tech based?
+- Answer: Trango Tech is headquartered in Lahore, Pakistan, with a legal entity in the United Kingdom. We work with clients globally - primarily in North America, UK, Europe, and the Middle East.
+
+### Entry 22
+- Category: Legal
+- Question: Do you have case studies or a portfolio?
+- Answer: Yes - we have a portfolio of 200+ projects. We share relevant case studies (with client consent) during the proposal stage. We can also provide references upon request.
+
+### Entry 23
+- Category: Legal
+- Question: What guarantees do you offer?
+- Answer: We guarantee: on-time delivery within agreed timeline (or we provide free sprints), full source code ownership, and a 30-60 day bug fix warranty post-launch at no cost.
+
+### Entry 24
+- Category: Process
+- Question: How do I get started?
+- Answer: Three steps: 1) Book a free 30-min discovery call. 2) We send you a detailed proposal + SOW within 48 hours. 3) Sign + first milestone payment -> kickoff within 5 days.
+
+### Entry 25
+- Category: Process
+- Question: What is a SOW?
+- Answer: A Statement of Work - a legally binding document defining the exact scope, deliverables, timeline, tech stack, team composition, and payment terms. It protects both you and us.
+
+## IndustryUseCases
+
+### Entry 1
+- Industry: Healthcare
+- CommonNeeds: Patient portals, appointment booking, telemedicine, EMR/EHR integration, HIPAA compliance
+- RecommendedServices: Mobile App Development, Web Application, AI/ML Integration
+- ExampleProject: React Native telemedicine app with video calling, appointment scheduling, and EHR integration for a US clinic chain
+- TypicalBudgetRange: $10,000-$50,000
+
+### Entry 2
+- Industry: Fintech
+- CommonNeeds: Digital wallets, payment processing, loan management, KYC/AML, real-time analytics
+- RecommendedServices: Web Application, Mobile App, API Development, AI/ML
+- ExampleProject: GDPR-compliant digital banking web app with Plaid integration and AI fraud detection
+- TypicalBudgetRange: $20,000-$100,000+
+
+### Entry 3
+- Industry: E-commerce & Retail
+- CommonNeeds: Custom storefronts, inventory management, loyalty programs, personalization
+- RecommendedServices: E-commerce Development, Mobile App, AI Product Recommendations
+- ExampleProject: Headless commerce platform with Next.js, Stripe, and AI recommendations for a D2C brand
+- TypicalBudgetRange: $5,000-$30,000
+
+### Entry 4
+- Industry: Education & EdTech
+- CommonNeeds: LMS platforms, live classes, quizzes, certificates, progress tracking
+- RecommendedServices: Web Application, Mobile App, SaaS Development
+- ExampleProject: Multi-tenant EdTech SaaS with live video classes, AI tutoring chatbot, and Stripe billing
+- TypicalBudgetRange: $12,000-$40,000
+
+### Entry 5
+- Industry: Logistics & Supply Chain
+- CommonNeeds: Real-time tracking, route optimization, driver apps, warehouse management
+- RecommendedServices: Mobile App, Web Application, API/Integration, AI/ML
+- ExampleProject: Multi-city logistics platform with driver mobile app, real-time GPS, and AI route optimization
+- TypicalBudgetRange: $15,000-$60,000
+
+### Entry 6
+- Industry: Real Estate
+- CommonNeeds: Property listing portals, CRM for agents, virtual tours, mortgage calculators
+- RecommendedServices: Web Application, Mobile App, CRM Development
+- ExampleProject: Property marketplace with Mapbox integration, agent CRM, and lead scoring for a UAE agency
+- TypicalBudgetRange: $8,000-$25,000
+
+### Entry 7
+- Industry: HR & Workforce Management
+- CommonNeeds: Attendance, payroll, onboarding, performance reviews, compliance
+- RecommendedServices: Custom ERP/CRM, Web Application, AI/ML
+- ExampleProject: Full HR ERP with biometric attendance, payroll automation, and leave management for a 500-person company
+- TypicalBudgetRange: $15,000-$50,000
+
+### Entry 8
+- Industry: Restaurant & Food Tech
+- CommonNeeds: Online ordering, table management, kitchen display systems, loyalty, delivery tracking
+- RecommendedServices: Mobile App, Web Application, E-commerce
+- ExampleProject: Multi-restaurant food delivery app (iOS + Android) with kitchen display, real-time tracking, and Stripe
+- TypicalBudgetRange: $8,000-$30,000
+
+### Entry 9
+- Industry: SaaS / Tech Startups
+- CommonNeeds: MVP, multi-tenancy, billing, onboarding, analytics, fast iteration
+- RecommendedServices: SaaS Development, MVP Development, AI/ML
+- ExampleProject: B2B project management SaaS with multi-tenant architecture, Stripe subscriptions, and AI task prioritization
+- TypicalBudgetRange: $10,000-$40,000
+
+### Entry 10
+- Industry: Non-Profit & NGO
+- CommonNeeds: Donor management, volunteer portals, event management, grant tracking
+- RecommendedServices: Web Application, CRM Development
+- ExampleProject: Donor management platform with Stripe donations, impact reporting, and volunteer coordination for a US NGO
+- TypicalBudgetRange: $4,000-$15,000
+
+## Objections
+
+### Entry 1
+- ObjectionType: Price
+- ObjectionText: That's too expensive / can you give a discount?
+- RecommendedResponse: I understand - software investment is significant. Let me share why our pricing is structured this way: you're getting a full team with specialized roles, quality guarantees, and 30/40/30 milestone payments so you never pay everything upfront. That said, we do have a startup discount and a bundle discount if you're combining services. Are either of those relevant to your situation?
+- ValueReframe: Cost vs. risk: a cheaper agency costs more when you need rewrites. Our on-time delivery guarantee and bug warranty protect your investment.
+
+### Entry 2
+- ObjectionType: Timeline
+- ObjectionText: That's too long / I need it faster
+- RecommendedResponse: That's totally fair - let me check what's possible. We do offer a Fast Track option for most packages that cuts 30% off the timeline for a 15-25% surcharge. Can you share your hard deadline? We can also scope down to a v1 that hits your launch date and build the remaining features post-launch.
+- ValueReframe: Rushed development = technical debt. Fast Track with the right scope is better than rushing everything.
+
+### Entry 3
+- ObjectionType: Trust
+- ObjectionText: How do I know you'll deliver?
+- RecommendedResponse: Completely valid concern. Here's what protects you: We sign an NDA before anything is shared. Our payment is milestone-based - you never pay for work that hasn't been done. And we've delivered 200+ projects - I can share relevant case studies immediately. Would you like to see work similar to your project?
+- ValueReframe: Trango Tech has a portfolio of 200+ projects, client references, and a money-backed milestone payment structure.
+
+### Entry 4
+- ObjectionType: Quality
+- ObjectionText: I've had bad experiences with offshore agencies before
+- RecommendedResponse: That's unfortunately common. Here's what makes us different: dedicated PM, bi-weekly demos, bi-directional Slack access, and a formal QA phase with bug-fix warranty. You're not talking to just a developer - you have a full team accountable to a SOW.
+- ValueReframe: Process + accountability is the difference between a vendor and a partner.
+
+### Entry 5
+- ObjectionType: Budget
+- ObjectionText: We don't have that budget / budget hasn't been approved yet
+- RecommendedResponse: No problem - let me ask: what budget has been approved so far? We might be able to scope a Phase 1 that fits your current budget and delivers real value, then plan Phase 2 for later. That's often smarter than waiting.
+- ValueReframe: Phased delivery lets you show ROI early and unlock future budget internally.
+
+### Entry 6
+- ObjectionType: Internal
+- ObjectionText: I need to discuss with my team / boss first
+- RecommendedResponse: Of course - that's the right move. To make that conversation easier, I can send you a one-page proposal summary you can share internally, and we can also do a 30-minute call with the full decision-making team. Which would be more useful?
+- ValueReframe: Make it easy to say yes internally. Offer supporting material for internal champions.
+
+### Entry 7
+- ObjectionType: Scope
+- ObjectionText: I'm not sure exactly what I need yet
+- RecommendedResponse: That's very common at this stage! Discovery is actually a service we offer - a structured 1-2 week Discovery Sprint where we help define your requirements, tech stack, and roadmap. Many clients start here before we quote the full build. Would that be useful?
+- ValueReframe: Uncertainty is normal. Discovery Sprint is a low-risk first step.
+
+### Entry 8
+- ObjectionType: NDA
+- ObjectionText: Can I get an NDA before sharing details?
+- RecommendedResponse: Absolutely - we always sign an NDA before any confidential information is shared. I can have our standard mutual NDA to you within the hour. What email should I send it to?
+- ValueReframe: NDA is standard practice. We take IP seriously.
+
+### Entry 9
+- ObjectionType: Competitors
+- ObjectionText: I'm also talking to other agencies
+- RecommendedResponse: Smart move - you should compare. When you do, ask them: Do they have a dedicated PM? Is payment milestone-based? Will they sign a delivery guarantee with penalty clauses? Those separate good agencies from great ones. Here's what we offer that most don't...
+- ValueReframe: Differentiate on process quality, accountability, and guarantees - not just price.
+
+### Entry 10
+- ObjectionType: Support
+- ObjectionText: What happens after launch? Are you just going to disappear?
+- RecommendedResponse: Never. Every package includes 1-3 months of post-launch support. After that, we offer retainer plans starting at $500/month. Many clients keep us as their ongoing engineering team. You won't be left without support.
+- ValueReframe: We're building a long-term partnership, not just completing a transaction.
+
+### Entry 11
+- ObjectionType: Timezone
+- ObjectionText: You're in a different timezone - how will communication work?
+- RecommendedResponse: Great question. Our team has a 3-4 hour overlap with US/European clients daily, and your PM will be available on Slack throughout your business hours for non-urgent items. We also do weekly video calls at your preferred time. Most clients find this works seamlessly.
+- ValueReframe: Timezone difference is manageable with the right processes. Async tools + overlap hours work well.
+
+### Entry 12
+- ObjectionType: IP
+- ObjectionText: Who owns the IP / code?
+- RecommendedResponse: You do - 100%. All work is done under a Work-For-Hire agreement. Upon final payment, you receive full source code, all assets, documentation, and IP assignment letter. We retain zero rights to your product.
+- ValueReframe: Full IP ownership is non-negotiable - you own everything.
+
+## CompanyProfile
+
+### Entry 1
+- CompanyName: Trango Tech
+- Founded: 2016
+- HQ: Lahore, Pakistan (with UK entity)
+- TeamSize: 50-80 engineers and specialists
+- Portfolio: 200+ completed projects across 25+ countries
+- Specialities: Web Apps, Mobile Apps (iOS/Android), SaaS, AI/ML, ERP/CRM, E-commerce, UI/UX, Staff Augmentation
+- Certifications: ISO-aligned processes, GDPR-compliant data handling, HIPAA project experience
+- ContactEmail: sales@trangotechdevs.com
+- Website: https://www.trangotechdevs.com
+- SalesConsultant: Alex (AI Sales Agent)
+- ClientRegions: USA, UK, Canada, UAE, Saudi Arabia, Germany, Australia
+- ValueProposition: Senior-level talent, full-service delivery, transparent pricing, 30/40/30 payment, on-time guarantee

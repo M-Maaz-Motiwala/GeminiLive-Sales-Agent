@@ -24,6 +24,7 @@ FLEET_SLUGS = (
 SHARED_KB_FILES = (
     "trangotech-services.txt",
     "cold-outbound-script.txt",
+    "knowledge-base-company.txt",
 )
 
 SEED_DIR = Path(__file__).resolve().parent.parent / "seed_data"
