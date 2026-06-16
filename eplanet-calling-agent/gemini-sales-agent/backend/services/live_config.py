@@ -32,6 +32,11 @@ Lead capture quality (critical):
 - Only call create_lead after explicit confirmation that details are correct.
 - If caller corrects any saved detail, call update_lead_details immediately and confirm the corrected value back.
 
+Call ending behavior:
+- If caller clearly indicates they are done (e.g., "bye", "that's all", "talk later"), politely close with a short farewell.
+- Then call end_call to hang up automatically instead of waiting for the caller to disconnect.
+- Do not end abruptly; always give one brief closing sentence first.
+
 """
 
 INBOUND_KB_QUERY = (

@@ -1764,6 +1764,10 @@ class GeminiLiveBridge:
             call.state.token_usage.add_text_context(payload)
         logger.info("Tool call batch: %s", [r.name for r in responses])
         await session.send_tool_response(function_responses=list(responses))
+        # Allow model to end calls after polite confirmation.
+        if any(r.name == "end_call" for r in responses):
+            logger.info("end_call requested by model; hanging up human channel=%s", call.human_channel_id)
+            asyncio.create_task(self.cleanup_call(call))
 
     # ----------------------------------------------------------------- RTP
 

@@ -47,6 +47,20 @@ async def _attach_lead_to_session(
 # Tool declarations sent to Gemini during session config
 TOOL_DECLARATIONS = [
     {
+        "name": "end_call",
+        "description": "End the current phone call after confirming the caller is done.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "Why the call is ending (e.g. caller_said_bye, completed).",
+                }
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "create_lead",
         "description": "Save a new sales lead captured during the conversation.",
         "parameters": {
@@ -136,8 +150,9 @@ TOOL_DECLARATIONS = [
 def get_tool_declarations(enabled_tools: list[str]) -> list[dict]:
     """Filter tool declarations to only those enabled for the agent."""
     if not enabled_tools:
-        return []
+        return [t for t in TOOL_DECLARATIONS if t["name"] == "end_call"]
     names = set(enabled_tools)
+    names.add("end_call")
     # If agent can capture leads, also allow updating corrected details.
     if "create_lead" in names:
         names.add("update_lead_details")
@@ -163,6 +178,12 @@ async def dispatch(
             result = await crm_tools.create_lead(db, params)
             if session_id and db and result.get("lead_id"):
                 await _attach_lead_to_session(db, session_id, result["lead_id"], params)
+
+        elif tool_name == "end_call":
+            result = {
+                "status": "ending_call",
+                "reason": params.get("reason") or "caller_done",
+            }
 
         elif tool_name == "search_contacts":
             result = await crm_tools.search_contacts(db, params)
