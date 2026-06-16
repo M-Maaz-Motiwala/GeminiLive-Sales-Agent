@@ -36,6 +36,7 @@ async def originate_outbound(
     lead_id: Optional[int] = None,
     caller_id: Optional[str] = None,
     campaign_lead_id: Optional[int] = None,
+    connect_experience: Optional[str] = None,
 ) -> dict[str, Any]:
     """Ask the bridge to originate an outbound call via Asterisk ARI."""
     base = (settings.bridge_url or "").rstrip("/")
@@ -52,6 +53,8 @@ async def originate_outbound(
         payload["caller_id"] = caller_id
     if campaign_lead_id is not None:
         payload["campaign_lead_id"] = campaign_lead_id
+    if connect_experience:
+        payload["connect_experience"] = connect_experience
 
     headers: dict[str, str] = {"Content-Type": "application/json"}
     if settings.bridge_internal_token:

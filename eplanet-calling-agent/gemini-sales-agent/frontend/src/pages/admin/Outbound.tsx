@@ -23,6 +23,7 @@ export default function Outbound() {
   const [agentId, setAgentId] = useState<number | ''>('');
   const [leadId, setLeadId] = useState<number | ''>('');
   const [endpoint, setEndpoint] = useState(DEFAULT_LAB_ENDPOINT);
+  const [connectExperience, setConnectExperience] = useState<'auto_greeting' | 'comfort_tone'>('auto_greeting');
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [dialing, setDialing] = useState(false);
@@ -89,6 +90,7 @@ export default function Outbound() {
         agent_id: Number(agentId),
         ...(endpoint.trim() ? { endpoint: endpoint.trim() } : {}),
         ...(leadId !== '' ? { lead_id: Number(leadId) } : {}),
+        connect_experience: connectExperience,
       });
       setStatus(
         `Dialing ${res.endpoint}… channel ${res.bridge?.channel_id ?? 'pending'}. ` +
@@ -235,6 +237,21 @@ export default function Outbound() {
                       </option>
                     ))}
                   </select>
+                </label>
+
+                <label className="block space-y-1.5">
+                  <span className="text-xs text-zinc-500 uppercase tracking-wide">Pickup experience</span>
+                  <select
+                    className={selectCls}
+                    value={connectExperience}
+                    onChange={e => setConnectExperience((e.target.value as 'auto_greeting' | 'comfort_tone') || 'auto_greeting')}
+                  >
+                    <option value="auto_greeting">Auto greeting (fast agent hello)</option>
+                    <option value="comfort_tone">Comfort tone (hold tone while connecting)</option>
+                  </select>
+                  <p className="text-[10px] text-zinc-600">
+                    Auto greeting minimizes delay if Gemini is ready fast. Comfort tone avoids dead-air by answering immediately with brief hold audio.
+                  </p>
                 </label>
 
                 <label className="block space-y-1.5">

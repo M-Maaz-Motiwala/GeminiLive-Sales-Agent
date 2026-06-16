@@ -26,6 +26,7 @@ async def dial_one(
     endpoint: Optional[str] = None,
     caller_id: Optional[str] = None,
     campaign_lead_id: Optional[int] = None,
+    connect_experience: Optional[str] = None,
 ) -> dict[str, Any]:
     if agent.type not in (AgentType.sales, AgentType.outbound_sales):
         raise ValueError("Agent is not a sales agent")
@@ -48,6 +49,7 @@ async def dial_one(
         lead_id=lead_id or (lead.id if lead else None),
         caller_id=cid,
         campaign_lead_id=campaign_lead_id,
+        connect_experience=connect_experience,
     )
 
     if lead and lead.phone:
@@ -63,5 +65,6 @@ async def dial_one(
         "endpoint_meta": ep_meta,
         "lead_id": lead_id or (lead.id if lead else None),
         "caller_id": cid,
+        "connect_experience": connect_experience or "auto_greeting",
         "bridge": bridge_resp,
     }

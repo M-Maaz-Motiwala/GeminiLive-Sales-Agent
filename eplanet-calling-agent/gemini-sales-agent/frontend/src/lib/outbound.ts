@@ -14,7 +14,7 @@ export async function fetchOutboundAgents(token: string | null): Promise<Outboun
 
 export async function dialOutbound(
   token: string | null,
-  body: { agent_id: number; lead_id?: number; endpoint?: string },
+  body: { agent_id: number; lead_id?: number; endpoint?: string; connect_experience?: 'auto_greeting' | 'comfort_tone' },
 ): Promise<{ status: string; endpoint: string; bridge?: { channel_id?: string } }> {
   return apiFetch('/api/outbound/dial', token, {
     method: 'POST',

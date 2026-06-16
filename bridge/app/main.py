@@ -895,11 +895,15 @@ class GeminiLiveBridge:
             direction = "inbound"
             lead_id: Optional[int] = None
             dialed_endpoint: Optional[str] = None
+            connect_experience = "auto_greeting"
             if pending:
                 agent_slug = pending.get("agent_slug") or agent_slug
                 lead_id = pending.get("lead_id")
                 dialed_endpoint = pending.get("endpoint")
                 direction = "outbound"
+                connect_experience = str(
+                    pending.get("connect_experience") or "auto_greeting"
+                ).strip().lower()
             elif len(args) > 1 and args[1] == "outbound":
                 direction = "outbound"
                 if len(args) > 2 and str(args[2]).isdigit():
@@ -943,9 +947,23 @@ class GeminiLiveBridge:
                     logger.warning("ARI ring failed for %s (continuing)", channel_id)
             else:
                 logger.info(
-                    "Outbound call %s — ringback disabled, connecting when Gemini ready",
+                    "Outbound call %s — connect_experience=%s",
                     channel_id,
+                    connect_experience,
                 )
+                if connect_experience == "comfort_tone":
+                    try:
+                        await self.http.post(f"/channels/{channel_id}/answer")
+                        await self.http.post(f"/channels/{channel_id}/moh")
+                        logger.info(
+                            "Outbound comfort tone enabled on channel %s while Gemini connects",
+                            channel_id,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to start outbound comfort tone for %s (continuing)",
+                            channel_id,
+                        )
 
             # 3) Wait for Gemini session (with timeout).
             try:
@@ -979,8 +997,14 @@ class GeminiLiveBridge:
                 direction,
             )
 
-            # 5) Now answer and wire audio (caller hears agent immediately).
-            await self.http.post(f"/channels/{channel_id}/answer")
+            # 5) Answer and wire audio. In comfort_tone mode we already answered.
+            if not (direction == "outbound" and connect_experience == "comfort_tone"):
+                await self.http.post(f"/channels/{channel_id}/answer")
+            else:
+                try:
+                    await self.http.delete(f"/channels/{channel_id}/moh")
+                except Exception:
+                    logger.warning("Failed to stop MOH for %s", channel_id)
 
             bridge_resp = await self.http.post("/bridges", params={"type": "mixing"})
             bridge_resp.raise_for_status()
@@ -1274,6 +1298,7 @@ class GeminiLiveBridge:
         agent_slug: str,
         lead_id: Optional[int] = None,
         caller_id: Optional[str] = None,
+        connect_experience: Optional[str] = None,
     ) -> dict[str, Any]:
         """Originate an outbound call via ARI; StasisStart loads platform config."""
         if len(self._calls) >= self.max_concurrent_calls:
@@ -1312,6 +1337,7 @@ class GeminiLiveBridge:
             "lead_id": lead_id,
             "endpoint": endpoint,
             "direction": "outbound",
+            "connect_experience": (connect_experience or "auto_greeting"),
         }
         logger.info(
             "Originated outbound channel=%s agent=%s endpoint=%s lead=%s",
@@ -2023,6 +2049,7 @@ class OriginateIn(BaseModel):
     endpoint: str
     lead_id: Optional[int] = None
     caller_id: Optional[str] = None
+    connect_experience: Optional[str] = None
 
 
 def _verify_bridge_token(x_bridge_token: str = Header(..., alias="X-Bridge-Token")) -> None:
@@ -2041,6 +2068,7 @@ async def internal_originate(
         agent_slug=body.agent_slug,
         lead_id=body.lead_id,
         caller_id=body.caller_id,
+        connect_experience=body.connect_experience,
     )
 
 

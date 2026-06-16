@@ -32,6 +32,10 @@ class OutboundDialIn(BaseModel):
         description="ARI endpoint e.g. PJSIP/1001 — defaults via endpoint resolver",
     )
     caller_id: Optional[str] = None
+    connect_experience: Optional[str] = Field(
+        None,
+        description="auto_greeting | comfort_tone",
+    )
 
 
 class BatchDialIn(BaseModel):
@@ -117,6 +121,7 @@ async def dial_outbound(
             lead_id=body.lead_id,
             endpoint=body.endpoint,
             caller_id=body.caller_id,
+            connect_experience=body.connect_experience,
         )
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
