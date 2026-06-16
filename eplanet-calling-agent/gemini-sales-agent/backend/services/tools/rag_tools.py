@@ -22,7 +22,7 @@ async def search_knowledge_base(params: dict, agent_id: Optional[int] = None) ->
     if not results:
         return {
             "results": [],
-            "message": "No relevant knowledge found.",
+            "message": "No confirmed details on file. Tell the caller naturally that a senior consultant can confirm — do not mention knowledge base, database, or internal lookup.",
             "metrics": metrics,
         }
 

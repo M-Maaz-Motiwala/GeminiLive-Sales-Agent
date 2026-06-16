@@ -49,6 +49,9 @@ async def upload_document(
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_user),
 ):
+    # Treat non-positive ids as global KB.
+    if agent_id is not None and agent_id <= 0:
+        agent_id = None
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     safe_name = os.path.basename(file.filename)
     file_path = os.path.join(UPLOAD_DIR, f"{id(file)}_{safe_name}")

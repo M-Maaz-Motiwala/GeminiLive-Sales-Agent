@@ -1,4 +1,9 @@
-"""Seed RAG documents from backend/seed_data/ for each fleet sales agent."""
+"""Seed RAG documents from backend/seed_data/.
+
+Shared KB files are seeded once into the global namespace (agent_id=None),
+so every agent can query them. Agent-specific docs can still be uploaded
+from CRM by selecting a specific agent.
+"""
 import asyncio
 import os
 import shutil
@@ -11,15 +16,7 @@ from sqlalchemy import select
 
 from backend.config import get_settings
 from backend.db.database import AsyncSessionLocal, init_db
-from backend.db.models import Agent, Document, DocumentStatus
-
-FLEET_SLUGS = (
-    "sales-alex",
-    "sales-jordan",
-    "sales-morgan",
-    "sales-casey",
-    "sales-riley",
-)
+from backend.db.models import Document, DocumentStatus
 
 # Authoritative Trango Tech KB files (derived from knowledge_base.xlsx + master doc).
 # Old files (trangotech-services.txt, cold-outbound-script.txt,
@@ -53,72 +50,65 @@ async def seed_rag() -> None:
         return
 
     async with AsyncSessionLocal() as db:
-        for slug in FLEET_SLUGS:
-            result = await db.execute(select(Agent).where(Agent.slug == slug))
-            agent = result.scalar_one_or_none()
-            if not agent:
-                print(f"Agent {slug} not found; run seed_agents first")
+        for filename in SHARED_KB_FILES:
+            src = SEED_DIR / filename
+            if not src.exists():
+                print(f"Seed file missing: {src}")
                 continue
 
-            for filename in SHARED_KB_FILES:
-                src = SEED_DIR / filename
-                if not src.exists():
-                    print(f"Seed file missing: {src}")
-                    continue
-
-                seed_name = f"{SEED_NAME_PREFIX}{filename}"
-                existing = await db.execute(
-                    select(Document).where(
-                        Document.agent_id == agent.id,
-                        Document.name == seed_name,
-                    )
+            seed_name = f"{SEED_NAME_PREFIX}global:{filename}"
+            existing = await db.execute(
+                select(Document).where(
+                    Document.agent_id.is_(None),
+                    Document.name == seed_name,
                 )
-                doc = existing.scalar_one_or_none()
+            )
+            doc = existing.scalar_one_or_none()
 
-                if doc is not None:
-                    if doc.status == DocumentStatus.indexed and (doc.chunk_count or 0) > 0:
-                        print(f"RAG doc already indexed: {filename} for {slug}")
-                        continue
-                    if doc.status == DocumentStatus.indexing:
-                        print(f"RAG doc already indexing: {filename} for {slug}")
-                        continue
-                    if doc.status == DocumentStatus.pending:
-                        from backend.services.document_indexer import index_document
-
-                        index_document.delay(doc.id, doc.file_path, agent.id)
-                        continue
-
-                dest_name = f"seed_{agent.id}_{filename}"
-                dest = UPLOAD_DIR / dest_name
-                shutil.copy2(src, dest)
-
-                if doc is not None and doc.status == DocumentStatus.failed:
-                    doc.file_path = str(dest)
-                    doc.file_size = dest.stat().st_size
-                    doc.status = DocumentStatus.pending
-                    doc.chunk_count = 0
-                    await db.flush()
+            if doc is not None:
+                if doc.status == DocumentStatus.indexed and (doc.chunk_count or 0) > 0:
+                    print(f"Global RAG doc already indexed: {filename}")
+                    continue
+                if doc.status == DocumentStatus.indexing:
+                    print(f"Global RAG doc already indexing: {filename}")
+                    continue
+                if doc.status == DocumentStatus.pending:
                     from backend.services.document_indexer import index_document
 
-                    index_document.delay(doc.id, str(dest), agent.id)
-                    print(f"Re-queued failed RAG doc: {filename} → {slug}")
+                    index_document.delay(doc.id, doc.file_path, None)
                     continue
 
-                doc = Document(
-                    agent_id=agent.id,
-                    name=seed_name,
-                    original_filename=filename,
-                    file_path=str(dest),
-                    file_size=dest.stat().st_size,
-                    status=DocumentStatus.pending,
-                )
-                db.add(doc)
-                await db.flush()
+            dest_name = f"seed_global_{filename}"
+            dest = UPLOAD_DIR / dest_name
+            shutil.copy2(src, dest)
 
+            if doc is not None and doc.status == DocumentStatus.failed:
+                doc.file_path = str(dest)
+                doc.file_size = dest.stat().st_size
+                doc.status = DocumentStatus.pending
+                doc.chunk_count = 0
+                await db.flush()
                 from backend.services.document_indexer import index_document
 
-                index_document.delay(doc.id, str(dest), agent.id)
-                print(f"Queued RAG indexing: {filename} → {slug}")
+                index_document.delay(doc.id, str(dest), None)
+                print(f"Re-queued failed global RAG doc: {filename}")
+                continue
+
+            doc = Document(
+                agent_id=None,
+                name=seed_name,
+                original_filename=filename,
+                file_path=str(dest),
+                file_size=dest.stat().st_size,
+                status=DocumentStatus.pending,
+            )
+            db.add(doc)
+            await db.flush()
+
+            from backend.services.document_indexer import index_document
+
+            index_document.delay(doc.id, str(dest), None)
+            print(f"Queued global RAG indexing: {filename}")
 
         await db.commit()
 

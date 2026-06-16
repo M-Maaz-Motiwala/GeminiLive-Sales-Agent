@@ -18,7 +18,7 @@ export default function Documents() {
   const { token } = useAuth();
   const [docs, setDocs] = useState<any[]>([]);
   const [agents, setAgents] = useState<any[]>([]);
-  const [agentId, setAgentId] = useState('');
+  const [agentId, setAgentId] = useState('global');
   const [filterAgentId, setFilterAgentId] = useState('all');
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -26,7 +26,10 @@ export default function Documents() {
   const fileRef = useRef<HTMLInputElement>(null);
   const headers = { Authorization: `Bearer ${token}` };
 
-  const agentName = (id: number) => agents.find(a => a.id === id)?.name || `Agent ${id}`;
+  const agentName = (id: number | null | undefined) => {
+    if (id === null || id === undefined) return 'Global KB';
+    return agents.find(a => a.id === id)?.name || `Agent ${id}`;
+  };
 
   const load = () => {
     apiFetchList('/api/documents', token).then(setDocs);
@@ -41,20 +44,26 @@ export default function Documents() {
     load();
     apiFetchList('/api/agents', token).then(d => {
       setAgents(d);
-      if (d[0]) setAgentId(String(d[0].id));
+      if (!agentId) setAgentId('global');
     });
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
   }, [token]);
 
-  const filtered = filterAgentId === 'all' ? docs : docs.filter(d => String(d.agent_id) === filterAgentId);
+  const filtered =
+    filterAgentId === 'all'
+      ? docs
+      : filterAgentId === 'global'
+        ? docs.filter(d => d.agent_id === null || d.agent_id === undefined)
+        : docs.filter(d => String(d.agent_id) === filterAgentId);
 
   const upload = async (file: File) => {
-    if (!agentId) return;
     setUploading(true);
     const fd = new FormData();
     fd.append('file', file);
-    fd.append('agent_id', agentId);
+    if (agentId !== 'global') {
+      fd.append('agent_id', agentId);
+    }
     await fetch(`${API_BASE}/api/documents`, { method: 'POST', headers, body: fd });
     setUploading(false);
     load();
@@ -83,13 +92,14 @@ export default function Documents() {
 
   return (
     <div className="p-6 lg:p-8">
-      <PageHeader title="Knowledge Base" subtitle="Upload RAG documents per agent — PDF, DOCX, TXT" />
+      <PageHeader title="Knowledge Base" subtitle="Global KB for all agents + optional per-agent KB overlays (PDF, DOCX, TXT)" />
 
       <GlassCard className="p-4 mb-6">
         <div className="flex flex-wrap gap-4 items-end">
           <div>
-            <label className="block text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">Upload for agent</label>
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">Upload target</label>
             <select value={agentId} onChange={e => setAgentId(e.target.value)} className={selectCls}>
+              <option value="global">Global KB (all agents)</option>
               {agents.map(a => (
                 <option key={a.id} value={a.id}>{a.name}{a.inbound_extension ? ` (ext ${a.inbound_extension})` : ''}</option>
               ))}
@@ -99,10 +109,11 @@ export default function Documents() {
             <label className="block text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">Filter</label>
             <select value={filterAgentId} onChange={e => setFilterAgentId(e.target.value)} className={selectCls}>
               <option value="all">All agents</option>
+              <option value="global">Global KB</option>
               {agents.map(a => <option key={a.id} value={String(a.id)}>{a.name}</option>)}
             </select>
           </div>
-          <BtnPrimary onClick={() => fileRef.current?.click()} disabled={uploading || !agentId}>
+          <BtnPrimary onClick={() => fileRef.current?.click()} disabled={uploading}>
             {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
             Upload file
           </BtnPrimary>

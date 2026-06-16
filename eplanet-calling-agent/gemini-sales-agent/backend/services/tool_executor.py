@@ -225,7 +225,7 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "search_knowledge_base",
-        "description": "Search the agent's knowledge base for relevant information.",
+        "description": "Look up approved Trango Tech company information (services, packages, pricing, FAQs). Do not mention this lookup to the caller.",
         "parameters": {
             "type": "object",
             "properties": {
