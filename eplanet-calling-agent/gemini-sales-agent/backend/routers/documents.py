@@ -18,6 +18,7 @@ UPLOAD_DIR = "uploads"
 def _out(d: Document) -> dict:
     return {"id": d.id, "name": d.name, "original_filename": d.original_filename,
             "file_size": d.file_size, "status": d.status, "chunk_count": d.chunk_count,
+            "retry_count": d.retry_count, "last_error": d.last_error, "last_attempt_at": d.last_attempt_at,
             "agent_id": d.agent_id, "created_at": d.created_at, "indexed_at": d.indexed_at}
 
 
@@ -25,6 +26,19 @@ def _out(d: Document) -> dict:
 async def list_documents(db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
     result = await db.execute(select(Document).order_by(Document.created_at.desc()))
     return [_out(d) for d in result.scalars().all()]
+
+
+@router.get("/summary")
+async def documents_summary(db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
+    result = await db.execute(select(Document))
+    docs = list(result.scalars().all())
+    counts = {"total": len(docs), "indexed": 0, "indexing": 0, "pending": 0, "failed": 0}
+    for d in docs:
+        st = str(d.status.value if hasattr(d.status, "value") else d.status)
+        if st in counts:
+            counts[st] += 1
+    counts["remaining"] = counts["pending"] + counts["failed"]
+    return counts
 
 
 @router.post("")
@@ -62,6 +76,39 @@ async def upload_document(
         doc.status = DocumentStatus.failed
 
     return _out(doc)
+
+
+async def _queue_index(doc: Document):
+    from backend.services.document_indexer import index_document
+    index_document.delay(doc.id, doc.file_path, doc.agent_id)
+
+
+@router.post("/{doc_id}/retry")
+async def retry_document(doc_id: int, db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
+    result = await db.execute(select(Document).where(Document.id == doc_id))
+    d = result.scalar_one_or_none()
+    if not d:
+        raise HTTPException(404, "Document not found")
+    if d.status == DocumentStatus.indexing:
+        return {"status": "already_indexing", "doc_id": d.id}
+    d.status = DocumentStatus.pending
+    await db.flush()
+    await _queue_index(d)
+    return {"status": "queued", "doc_id": d.id}
+
+
+@router.post("/retry-remaining")
+async def retry_remaining_documents(db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
+    result = await db.execute(
+        select(Document).where(Document.status.in_([DocumentStatus.pending, DocumentStatus.failed]))
+    )
+    docs = list(result.scalars().all())
+    queued = 0
+    for d in docs:
+        d.status = DocumentStatus.pending
+        await _queue_index(d)
+        queued += 1
+    return {"status": "queued", "count": queued}
 
 
 @router.delete("/{doc_id}", status_code=204)

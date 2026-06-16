@@ -85,6 +85,8 @@ def index_document(self, doc_id: int, file_path: str, agent_id: Optional[int]):
                     return
 
                 doc.status = DocumentStatus.indexing
+                doc.last_attempt_at = datetime.now(timezone.utc)
+                doc.last_error = None
                 await db.commit()
 
                 try:
@@ -102,12 +104,15 @@ def index_document(self, doc_id: int, file_path: str, agent_id: Optional[int]):
                     doc.status = DocumentStatus.indexed
                     doc.chunk_count = count
                     doc.indexed_at = datetime.now(timezone.utc)
+                    doc.last_error = None
                     await db.commit()
                     logger.info("Document %d indexed: %d vectors", doc_id, count)
 
                 except Exception as e:
                     logger.error("Document %d indexing failed: %s", doc_id, e)
                     doc.status = DocumentStatus.failed
+                    doc.retry_count = int(doc.retry_count or 0) + 1
+                    doc.last_error = str(e)
                     await db.commit()
                     raise self.retry(exc=e, countdown=60) from e
         finally:

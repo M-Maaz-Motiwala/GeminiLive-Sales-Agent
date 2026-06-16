@@ -16,6 +16,9 @@ _PATCHES = (
         updated_at TIMESTAMPTZ DEFAULT now()
     )""",
     "ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_profile JSONB DEFAULT '{}'::jsonb",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS retry_count INTEGER DEFAULT 0",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS last_error TEXT",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ",
 )
 
 
