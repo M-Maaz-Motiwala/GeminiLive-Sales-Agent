@@ -144,7 +144,11 @@ async def generate_output(
     prompts = {
         "lead_capture": (
             "Extract lead information from this conversation as JSON with keys: "
-            "name, email, phone, company, interest_level (1-10), key_needs (array of strings), "
+            "name, email, phone, company, industry, service_required, budget, timeline, "
+            "preferred_meeting_time, requirement, recommended_service_package, "
+            "key_features (array of strings), decision_maker_status, "
+            "objections_concerns (array of strings), lead_temperature, "
+            "recommended_next_step, interest_level (1-10), key_needs (array of strings), "
             "notes (short string). Return ONLY valid JSON."
         ),
         "action_items": (

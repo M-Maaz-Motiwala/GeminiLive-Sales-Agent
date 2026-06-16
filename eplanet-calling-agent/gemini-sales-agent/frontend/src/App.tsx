@@ -17,6 +17,7 @@ import Outputs from '@/src/pages/admin/Outputs';
 import Notes from '@/src/pages/admin/Notes';
 import FAQ from '@/src/pages/admin/FAQ';
 import HelpDocs from '@/src/pages/admin/HelpDocs';
+import Settings from '@/src/pages/admin/Settings';
 
 export default function App() {
   return (
@@ -43,6 +44,7 @@ export default function App() {
             <Route path="notes" element={<Notes />} />
             <Route path="faq" element={<FAQ />} />
             <Route path="docs" element={<HelpDocs />} />
+            <Route path="settings" element={<Settings />} />
           </Route>
           <Route path="*" element={<Navigate to="/admin/login" replace />} />
         </Routes>

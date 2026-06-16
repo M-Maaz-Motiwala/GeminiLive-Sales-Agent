@@ -1,9 +1,27 @@
-"""System info for admin UI (SIP hints, defaults)."""
+"""System info for admin UI (SIP hints, defaults, global settings)."""
 import os
+from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.auth.deps import get_current_user
+from backend.db.database import get_db
+from backend.db.models import PlatformSetting
 
 router = APIRouter(prefix="/api/system", tags=["system"])
+
+SETTING_MASTER_PROMPT = "master_prompt"
+
+
+class SettingsOut(BaseModel):
+    master_prompt: Optional[str] = None
+
+
+class SettingsIn(BaseModel):
+    master_prompt: Optional[str] = None
 
 _CODEC_LABELS = {
     "PCMU": "G.711 μ-law (PCMU)",
@@ -69,3 +87,33 @@ async def system_info() -> dict:
             "600": "Echo test",
         },
     }
+
+
+@router.get("/settings", response_model=SettingsOut)
+async def get_settings(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+) -> SettingsOut:
+    result = await db.execute(
+        select(PlatformSetting).where(PlatformSetting.key == SETTING_MASTER_PROMPT)
+    )
+    row = result.scalar_one_or_none()
+    return SettingsOut(master_prompt=row.value if row else None)
+
+
+@router.put("/settings", response_model=SettingsOut)
+async def update_settings(
+    body: SettingsIn,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+) -> SettingsOut:
+    if body.master_prompt is not None:
+        result = await db.execute(
+            select(PlatformSetting).where(PlatformSetting.key == SETTING_MASTER_PROMPT)
+        )
+        row = result.scalar_one_or_none()
+        if row:
+            row.value = body.master_prompt or None
+        else:
+            db.add(PlatformSetting(key=SETTING_MASTER_PROMPT, value=body.master_prompt or None))
+    return SettingsOut(master_prompt=body.master_prompt)

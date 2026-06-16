@@ -61,53 +61,58 @@ def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OV
 @celery_app.task(bind=True, max_retries=3)
 def index_document(self, doc_id: int, file_path: str, agent_id: Optional[int]):
     """Extract, chunk, embed, and upsert a document to Pinecone."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
 
     async def _run():
-        from backend.db.database import AsyncSessionLocal
+        from sqlalchemy import select
+
+        from backend.db.database import AsyncSessionLocal, engine
         from backend.db.models import Document, DocumentStatus
 
-        async with AsyncSessionLocal() as db:
-            from sqlalchemy import select
-            result = await db.execute(select(Document).where(Document.id == doc_id))
-            doc = result.scalar_one_or_none()
-            if not doc:
-                logger.error("Document %d not found", doc_id)
-                return
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(select(Document).where(Document.id == doc_id))
+                doc = result.scalar_one_or_none()
+                if not doc:
+                    logger.error("Document %d not found", doc_id)
+                    return
 
-            if doc.status == DocumentStatus.indexed and doc.chunk_count > 0:
-                logger.info("Document %d already indexed (%d chunks); skipping", doc_id, doc.chunk_count)
-                return
+                if doc.status == DocumentStatus.indexed and doc.chunk_count > 0:
+                    logger.info(
+                        "Document %d already indexed (%d chunks); skipping",
+                        doc_id,
+                        doc.chunk_count,
+                    )
+                    return
 
-            doc.status = DocumentStatus.indexing
-            await db.commit()
-
-            try:
-                text = _extract_text(file_path)
-                if not text.strip():
-                    raise ValueError("No text extracted from document")
-
-                chunks = _chunk_text(text)
-                logger.info(f"Document {doc_id}: {len(chunks)} chunks extracted")
-
-                count = await rag_service.upsert_chunks(doc_id, agent_id, chunks)
-                if count == 0:
-                    raise ValueError("No vectors upserted to Pinecone")
-
-                doc.status = DocumentStatus.indexed
-                doc.chunk_count = count
-                doc.indexed_at = datetime.now(timezone.utc)
+                doc.status = DocumentStatus.indexing
                 await db.commit()
-                logger.info(f"Document {doc_id} indexed: {count} vectors")
 
-            except Exception as e:
-                logger.error(f"Document {doc_id} indexing failed: {e}")
-                doc.status = DocumentStatus.failed
-                await db.commit()
-                raise self.retry(exc=e, countdown=60)
+                try:
+                    text = _extract_text(file_path)
+                    if not text.strip():
+                        raise ValueError("No text extracted from document")
 
-    try:
-        loop.run_until_complete(_run())
-    finally:
-        loop.close()
+                    chunks = _chunk_text(text)
+                    logger.info("Document %d: %d chunks extracted", doc_id, len(chunks))
+
+                    count = await rag_service.upsert_chunks(doc_id, agent_id, chunks)
+                    if count == 0:
+                        raise ValueError("No vectors upserted to Pinecone")
+
+                    doc.status = DocumentStatus.indexed
+                    doc.chunk_count = count
+                    doc.indexed_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    logger.info("Document %d indexed: %d vectors", doc_id, count)
+
+                except Exception as e:
+                    logger.error("Document %d indexing failed: %s", doc_id, e)
+                    doc.status = DocumentStatus.failed
+                    await db.commit()
+                    raise self.retry(exc=e, countdown=60) from e
+        finally:
+            # Celery prefork workers run many tasks per process; asyncpg
+            # connections must not be reused across closed event loops.
+            await engine.dispose()
+
+    asyncio.run(_run())

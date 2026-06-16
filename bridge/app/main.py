@@ -149,6 +149,10 @@ ECHO_GATE_SEC = float(os.getenv("ECHO_GATE_SEC", "0.5"))
 # Applies to INBOUND calls only — outbound skips ringback (see use_inbound_ringback).
 RING_MIN_SEC = float(os.getenv("RING_MIN_SEC", "3"))
 GEMINI_READY_TIMEOUT_SEC = float(os.getenv("GEMINI_READY_TIMEOUT_SEC", "20"))
+# How long RTP inbound frame count must be frozen before the bridge force-cleans
+# an outbound call. 15 s was too aggressive for live PSTN calls with brief
+# network hiccups. Raise with OUTBOUND_RTP_STALL_SEC env var.
+OUTBOUND_RTP_STALL_SEC = float(os.getenv("OUTBOUND_RTP_STALL_SEC", "45"))
 
 
 def use_inbound_ringback(call_direction: str) -> bool:
@@ -613,40 +617,52 @@ class GeminiLiveBridge:
                 )
                 if (
                     state.rtp_stall_since
-                    and stall_sec >= 15.0
                     and state.rtp_in_frames > 30
                     and call.state.human_channel_id
                 ):
                     # Outbound ARI channels often stay "Up" after the prospect
                     # hangs up (no StasisEnd). Inbound usually gets StasisEnd.
-                    if state.call_direction == "outbound":
-                        logger.warning(
-                            "Cleaning up outbound call %s (RTP stalled %.0fs)",
-                            call.state.human_channel_id,
-                            stall_sec,
-                        )
-                        await self.cleanup_call(call)
-                        continue
-                    if self.http is not None:
+                    # Before force-cleaning either direction, confirm the ARI
+                    # channel is actually gone (404) so a brief network hiccup
+                    # does not drop a live call.
+                    stall_threshold = (
+                        OUTBOUND_RTP_STALL_SEC
+                        if state.call_direction == "outbound"
+                        else 15.0
+                    )
+                    if stall_sec < stall_threshold:
+                        pass  # not stalled long enough yet
+                    elif self.http is not None:
+                        # ARI liveness check: only clean up if channel is gone.
+                        channel_alive = True
                         try:
                             resp = await self.http.get(
                                 f"/channels/{call.state.human_channel_id}"
                             )
-                            if resp.status_code == 404:
-                                logger.warning(
-                                    "Cleaning up stale inbound call %s "
-                                    "(channel gone, RTP stalled %.0fs)",
-                                    call.state.human_channel_id,
-                                    stall_sec,
-                                )
-                                await self.cleanup_call(call)
-                                continue
+                            channel_alive = resp.status_code != 404
                         except Exception:
                             logger.warning(
                                 "Stale call liveness check failed for %s",
                                 call.state.human_channel_id,
                                 exc_info=True,
                             )
+                        if not channel_alive:
+                            logger.warning(
+                                "Cleaning up %s call %s (RTP stalled %.0fs, channel gone)",
+                                state.call_direction,
+                                call.state.human_channel_id,
+                                stall_sec,
+                            )
+                            await self.cleanup_call(call)
+                            continue
+                        elif state.call_direction == "outbound":
+                            logger.warning(
+                                "Cleaning up outbound call %s (RTP stalled %.0fs)",
+                                call.state.human_channel_id,
+                                stall_sec,
+                            )
+                            await self.cleanup_call(call)
+                            continue
 
                 since_user = (
                     f"{now - state.last_user_tx_ts:.1f}s"

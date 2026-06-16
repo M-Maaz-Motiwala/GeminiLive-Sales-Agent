@@ -19,12 +19,14 @@ class LeadIn(BaseModel):
     status: LeadStatus = LeadStatus.new
     notes: Optional[str] = None
     tags: list = []
+    lead_profile: Optional[dict] = None
 
 
 def _out(l: Lead) -> dict:
     return {"id": l.id, "name": l.name, "email": l.email, "phone": l.phone,
             "company": l.company, "status": l.status, "notes": l.notes,
             "tags": l.tags, "source_session_id": l.source_session_id,
+            "lead_profile": l.lead_profile or {},
             "created_at": l.created_at, "updated_at": l.updated_at}
 
 
@@ -66,6 +68,7 @@ class LeadPatch(BaseModel):
     status: Optional[LeadStatus] = None
     notes: Optional[str] = None
     tags: Optional[list] = None
+    lead_profile: Optional[dict] = None
 
 
 @router.patch("/{lead_id}")

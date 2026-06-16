@@ -24,6 +24,52 @@ from backend.services.session_timeline import merge_message_turns
 logger = logging.getLogger(__name__)
 
 
+def _norm_str(val) -> str | None:
+    if val is None:
+        return None
+    s = str(val).strip()
+    return s or None
+
+
+def _merge_unique(existing, incoming) -> list[str]:
+    out: list[str] = []
+    for item in (existing or []):
+        s = _norm_str(item)
+        if s and s not in out:
+            out.append(s)
+    if isinstance(incoming, str):
+        incoming = [incoming]
+    for item in (incoming or []):
+        s = _norm_str(item)
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
+def _extract_lead_profile(lead_data: dict, existing: dict | None = None) -> dict:
+    profile = dict(existing or {})
+    scalar_fields = (
+        "industry",
+        "service_required",
+        "budget",
+        "timeline",
+        "preferred_meeting_time",
+        "requirement",
+        "recommended_service_package",
+        "decision_maker_status",
+        "lead_temperature",
+        "recommended_next_step",
+    )
+    for field in scalar_fields:
+        if field in lead_data and lead_data.get(field) is not None:
+            s = _norm_str(lead_data.get(field))
+            if s:
+                profile[field] = s
+    profile["key_features"] = _merge_unique(profile.get("key_features"), lead_data.get("key_features"))
+    profile["objections_concerns"] = _merge_unique(profile.get("objections_concerns"), lead_data.get("objections_concerns"))
+    return profile
+
+
 def _output_enum(name: str) -> OutputType:
     try:
         return OutputType(name)
@@ -75,8 +121,7 @@ async def _maybe_create_lead(db, session_id: int, lead_data: dict) -> int | None
     existing = await db.execute(
         select(Lead).where(Lead.source_session_id == session_id)
     )
-    if existing.scalar_one_or_none():
-        return None
+    existing_lead = existing.scalar_one_or_none()
 
     interest = lead_data.get("interest_level")
     try:
@@ -91,12 +136,37 @@ async def _maybe_create_lead(db, session_id: int, lead_data: dict) -> int | None
     if isinstance(key_needs, list) and key_needs:
         notes_parts.append("Needs: " + "; ".join(str(x) for x in key_needs))
 
+    lead_profile = _extract_lead_profile(lead_data, existing_lead.lead_profile if existing_lead else None)
+
+    if existing_lead:
+        if lead_data.get("name"):
+            existing_lead.name = lead_data.get("name") or existing_lead.name
+        if lead_data.get("email"):
+            existing_lead.email = lead_data.get("email")
+        if lead_data.get("phone"):
+            existing_lead.phone = lead_data.get("phone")
+        if lead_data.get("company"):
+            existing_lead.company = lead_data.get("company")
+        if notes_parts:
+            merged_notes = _merge_unique(
+                (existing_lead.notes or "").split("\n") if existing_lead.notes else [],
+                notes_parts,
+            )
+            existing_lead.notes = "\n".join(merged_notes) if merged_notes else existing_lead.notes
+        existing_lead.lead_profile = lead_profile
+        if interest_num >= 7:
+            existing_lead.status = LeadStatus.qualified
+        existing_lead.tags = _merge_unique(existing_lead.tags or [], ["auto-capture"])
+        await db.flush()
+        return existing_lead.id
+
     lead = Lead(
         name=lead_data.get("name") or "Unknown",
         email=lead_data.get("email"),
         phone=lead_data.get("phone"),
         company=lead_data.get("company"),
         notes="\n".join(notes_parts) or None,
+        lead_profile=lead_profile,
         source_session_id=session_id,
         status=LeadStatus.qualified if interest_num >= 7 else LeadStatus.new,
         tags=["auto-capture"],
@@ -177,6 +247,13 @@ async def process_call_end(session_id: int) -> None:
                                 "email": content.get("email"),
                                 "phone": content.get("phone"),
                                 "company": content.get("company"),
+                            },
+                            "lead_capture": {
+                                "name": content.get("name"),
+                                "email": content.get("email"),
+                                "phone": content.get("phone"),
+                                "company": content.get("company"),
+                                "lead_profile": _extract_lead_profile(content),
                             },
                         },
                     )

@@ -93,6 +93,15 @@ class User(Base):
     notes = relationship("Note", back_populates="created_by")
 
 
+class PlatformSetting(Base):
+    """Key-value store for global platform configuration (e.g. master_prompt)."""
+    __tablename__ = "platform_settings"
+
+    key = Column(String(255), primary_key=True)
+    value = Column(Text, nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class Agent(Base):
     __tablename__ = "agents"
 
@@ -103,6 +112,7 @@ class Agent(Base):
     system_prompt_template = Column(Text, nullable=False)
     inbound_prompt_template = Column(Text, nullable=True)
     outbound_prompt_template = Column(Text, nullable=True)
+    master_prompt_override = Column(Text, nullable=True)  # overrides global master prompt for this agent
     voice = Column(String(100), default="Zephyr")
     model = Column(String(100), default="gemini-3.1-flash-live-preview")
     enabled_tools = Column(JSON, default=list)
@@ -238,6 +248,7 @@ class Lead(Base):
     status = Column(Enum(LeadStatus), default=LeadStatus.new, nullable=False)
     source_session_id = Column(Integer, ForeignKey("sessions.id"), nullable=True)
     notes = Column(Text, nullable=True)
+    lead_profile = Column(JSON, default=dict)
     tags = Column(JSON, default=list)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

@@ -17,6 +17,9 @@ const EMPTY = {
   name: '', type: 'sales', system_prompt_template: '', voice: 'Zephyr',
   model: 'gemini-3.1-flash-live-preview', inbound_extension: '',
   enabled_tools: [] as string[], is_active: true,
+  inbound_prompt_template: '',
+  outbound_prompt_template: '',
+  master_prompt_override: '',
 };
 
 const selectCls = 'w-full rounded-xl border border-white/10 bg-black/40 px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-violet-500/50';
@@ -127,7 +130,7 @@ export default function Agents() {
                   </BtnGhost>
                 </Link>
               )}
-              <BtnGhost onClick={() => { setEditing(a); setForm({ name: a.name, type: a.type, system_prompt_template: a.system_prompt_template, voice: a.voice, model: a.model, inbound_extension: a.inbound_extension || '', enabled_tools: a.enabled_tools || [], is_active: a.is_active }); setOpen(true); }}>
+              <BtnGhost onClick={() => { setEditing(a); setForm({ name: a.name, type: a.type, system_prompt_template: a.system_prompt_template, voice: a.voice, model: a.model, inbound_extension: a.inbound_extension || '', enabled_tools: a.enabled_tools || [], is_active: a.is_active, inbound_prompt_template: a.inbound_prompt_template || '', outbound_prompt_template: a.outbound_prompt_template || '', master_prompt_override: a.master_prompt_override || '' }); setOpen(true); }}>
                 <Pencil className="w-4 h-4" /> Edit
               </BtnGhost>
               <BtnGhost className="text-red-400 border-red-500/20 hover:bg-red-500/10" onClick={() => confirm('Delete?') && fetch(`${API_BASE}/api/agents/${a.id}`, { method: 'DELETE', headers }).then(load)}>
@@ -156,8 +159,17 @@ export default function Agents() {
             <Field label="Type"><select className={selectCls} value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))}>{TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></Field>
             <Field label="Voice"><select className={selectCls} value={form.voice} onChange={e => setForm(f => ({ ...f, voice: e.target.value }))}>{VOICES.map(v => <option key={v} value={v}>{v}</option>)}</select></Field>
             <Field label="Model"><select className={selectCls} value={form.model} onChange={e => setForm(f => ({ ...f, model: e.target.value }))}>{MODELS.map(m => <option key={m} value={m}>{m}</option>)}</select></Field>
-            <Field label="System prompt">
-              <textarea rows={6} className={cn(inputCls, 'resize-y')} value={form.system_prompt_template} onChange={e => setForm(f => ({ ...f, system_prompt_template: e.target.value }))} />
+            <Field label="Inbound prompt (persona + call flow for inbound calls)">
+              <textarea rows={7} className={cn(inputCls, 'resize-y')} placeholder="Describe the agent's inbound persona and 9-stage funnel behavior..." value={form.inbound_prompt_template} onChange={e => setForm(f => ({ ...f, inbound_prompt_template: e.target.value }))} />
+            </Field>
+            <Field label="Outbound prompt (persona + call flow for outbound/campaign calls)">
+              <textarea rows={7} className={cn(inputCls, 'resize-y')} placeholder="Describe the agent's outbound cold-call persona and 9-stage funnel behavior..." value={form.outbound_prompt_template} onChange={e => setForm(f => ({ ...f, outbound_prompt_template: e.target.value }))} />
+            </Field>
+            <Field label="System prompt (fallback — used if inbound/outbound prompts are empty)">
+              <textarea rows={5} className={cn(inputCls, 'resize-y')} value={form.system_prompt_template} onChange={e => setForm(f => ({ ...f, system_prompt_template: e.target.value }))} />
+            </Field>
+            <Field label="Master prompt override (overrides global rules for this agent only — leave blank to use global)">
+              <textarea rows={5} className={cn(inputCls, 'resize-y')} placeholder="Leave blank to use the global master prompt from Settings..." value={form.master_prompt_override} onChange={e => setForm(f => ({ ...f, master_prompt_override: e.target.value }))} />
             </Field>
             <Field label="Tools">
               <div className="space-y-2 text-sm text-zinc-400">

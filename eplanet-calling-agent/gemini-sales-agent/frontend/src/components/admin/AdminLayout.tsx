@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 import {
   LayoutDashboard, Bot, PhoneCall, PhoneOutgoing, Megaphone, Users, UserCheck,
   FileText, Layers, LogOut, StickyNote, Headphones,
-  HelpCircle, BookOpen,
+  HelpCircle, BookOpen, Settings,
 } from 'lucide-react';
 
 const NAV = [
@@ -18,6 +18,7 @@ const NAV = [
   { to: '/admin/documents', icon: FileText, label: 'Knowledge Base' },
   { to: '/admin/outputs', icon: Layers, label: 'Outputs' },
   { to: '/admin/notes', icon: StickyNote, label: 'Notes' },
+  { to: '/admin/settings', icon: Settings, label: 'Settings' },
 ];
 
 const NAV_HELP = [

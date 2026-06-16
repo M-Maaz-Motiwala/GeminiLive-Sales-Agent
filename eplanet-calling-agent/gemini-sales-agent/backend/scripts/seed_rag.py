@@ -21,10 +21,12 @@ FLEET_SLUGS = (
     "sales-riley",
 )
 
+# Authoritative Trango Tech KB files (derived from knowledge_base.xlsx + master doc).
+# Old files (trangotech-services.txt, cold-outbound-script.txt,
+# lead-qualification-script.txt, knowledge-base-company.txt) are superseded
+# by these two and should not be re-seeded.
 SHARED_KB_FILES = (
-    "trangotech-services.txt",
-    "cold-outbound-script.txt",
-    "knowledge-base-company.txt",
+    "trango_tech_sales_agent_knowledge_base.txt",
 )
 
 SEED_DIR = Path(__file__).resolve().parent.parent / "seed_data"

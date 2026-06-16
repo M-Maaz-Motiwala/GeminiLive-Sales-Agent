@@ -11,6 +11,54 @@ from backend.services.tools import crm_tools, rag_tools
 logger = logging.getLogger(__name__)
 
 
+def _norm_str(val) -> str | None:
+    if val is None:
+        return None
+    s = str(val).strip()
+    return s or None
+
+
+def _merge_unique(existing, incoming) -> list[str]:
+    out: list[str] = []
+    for item in (existing or []):
+        s = _norm_str(item)
+        if s and s not in out:
+            out.append(s)
+    if isinstance(incoming, str):
+        incoming = [incoming]
+    for item in (incoming or []):
+        s = _norm_str(item)
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
+def _extract_lead_profile(params: dict, existing: dict | None = None) -> dict:
+    profile = dict(existing or {})
+    scalar_fields = (
+        "industry",
+        "service_required",
+        "budget",
+        "timeline",
+        "preferred_meeting_time",
+        "requirement",
+        "recommended_service_package",
+        "decision_maker_status",
+        "lead_temperature",
+        "recommended_next_step",
+    )
+    for field in scalar_fields:
+        if field in params and params.get(field) is not None:
+            s = _norm_str(params.get(field))
+            if s:
+                profile[field] = s
+    if "key_features" in params and params.get("key_features") is not None:
+        profile["key_features"] = _merge_unique(profile.get("key_features"), params.get("key_features"))
+    if "objections_concerns" in params and params.get("objections_concerns") is not None:
+        profile["objections_concerns"] = _merge_unique(profile.get("objections_concerns"), params.get("objections_concerns"))
+    return profile
+
+
 async def _attach_lead_to_session(
     db: AsyncSession,
     session_id: int,
@@ -33,7 +81,25 @@ async def _attach_lead_to_session(
                 "phone": params.get("phone"),
                 "company": params.get("company"),
             },
+            "lead_capture": {
+                "name": params.get("name"),
+                "email": params.get("email"),
+                "phone": params.get("phone"),
+                "company": params.get("company"),
+            },
         }
+        existing_lc = (sess.meta or {}).get("lead_capture")
+        if isinstance(existing_lc, dict):
+            patch["lead_capture"] = {
+                **existing_lc,
+                **{k: v for k, v in patch["lead_capture"].items() if v},
+            }
+        profile = _extract_lead_profile(
+            params,
+            (patch["lead_capture"].get("lead_profile") if isinstance(patch.get("lead_capture"), dict) else None),
+        )
+        if profile:
+            patch["lead_capture"]["lead_profile"] = profile
         phone = params.get("phone")
         if phone:
             patch["lead_phone"] = phone
@@ -71,6 +137,18 @@ TOOL_DECLARATIONS = [
                 "phone": {"type": "string", "description": "Phone number"},
                 "company": {"type": "string", "description": "Company name"},
                 "notes": {"type": "string", "description": "Any additional notes about the lead"},
+                "industry": {"type": "string", "description": "Prospect industry"},
+                "service_required": {"type": "string", "description": "Service required by prospect"},
+                "budget": {"type": "string", "description": "Budget shared by prospect"},
+                "timeline": {"type": "string", "description": "Timeline shared by prospect"},
+                "preferred_meeting_time": {"type": "string", "description": "Preferred time for follow-up meeting"},
+                "requirement": {"type": "string", "description": "Requirement summary"},
+                "recommended_service_package": {"type": "string", "description": "Recommended service/package"},
+                "key_features": {"type": "array", "items": {"type": "string"}, "description": "Key requested features"},
+                "decision_maker_status": {"type": "string", "description": "Decision-maker status"},
+                "objections_concerns": {"type": "array", "items": {"type": "string"}, "description": "Objections or concerns"},
+                "lead_temperature": {"type": "string", "description": "Hot | Warm | Cold | Unqualified"},
+                "recommended_next_step": {"type": "string", "description": "Recommended next step"},
             },
             "required": ["name"],
         },
@@ -101,6 +179,18 @@ TOOL_DECLARATIONS = [
                 "phone": {"type": "string", "description": "Corrected phone number"},
                 "company": {"type": "string", "description": "Corrected company name"},
                 "notes": {"type": "string", "description": "Additional corrected notes"},
+                "industry": {"type": "string", "description": "Prospect industry"},
+                "service_required": {"type": "string", "description": "Service required by prospect"},
+                "budget": {"type": "string", "description": "Budget shared by prospect"},
+                "timeline": {"type": "string", "description": "Timeline shared by prospect"},
+                "preferred_meeting_time": {"type": "string", "description": "Preferred time for follow-up meeting"},
+                "requirement": {"type": "string", "description": "Requirement summary"},
+                "recommended_service_package": {"type": "string", "description": "Recommended service/package"},
+                "key_features": {"type": "array", "items": {"type": "string"}, "description": "Key requested features"},
+                "decision_maker_status": {"type": "string", "description": "Decision-maker status"},
+                "objections_concerns": {"type": "array", "items": {"type": "string"}, "description": "Objections or concerns"},
+                "lead_temperature": {"type": "string", "description": "Hot | Warm | Cold | Unqualified"},
+                "recommended_next_step": {"type": "string", "description": "Recommended next step"},
             },
             "required": [],
         },

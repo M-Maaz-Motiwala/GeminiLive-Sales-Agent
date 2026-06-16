@@ -10,14 +10,68 @@ from backend.db.models import Lead, Contact, Note, LeadStatus
 logger = logging.getLogger(__name__)
 
 
+LEAD_PROFILE_FIELDS = (
+    "industry",
+    "service_required",
+    "budget",
+    "timeline",
+    "preferred_meeting_time",
+    "requirement",
+    "recommended_service_package",
+    "key_features",
+    "decision_maker_status",
+    "objections_concerns",
+    "lead_temperature",
+    "recommended_next_step",
+)
+
+
+def _norm_str(val) -> str | None:
+    if val is None:
+        return None
+    s = str(val).strip()
+    return s or None
+
+
+def _merge_unique(existing, incoming) -> list[str]:
+    out: list[str] = []
+    for item in (existing or []):
+        s = _norm_str(item)
+        if s and s not in out:
+            out.append(s)
+    if isinstance(incoming, str):
+        incoming = [incoming]
+    for item in (incoming or []):
+        s = _norm_str(item)
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
+def _extract_profile(params: dict, existing: dict | None = None) -> dict:
+    profile = dict(existing or {})
+    for field in LEAD_PROFILE_FIELDS:
+        if field not in params or params.get(field) is None:
+            continue
+        if field in {"key_features", "objections_concerns"}:
+            profile[field] = _merge_unique(profile.get(field), params.get(field))
+        else:
+            val = _norm_str(params.get(field))
+            if val:
+                profile[field] = val
+    return profile
+
+
 async def create_lead(db: AsyncSession, params: dict) -> dict:
     session_id = params.get("source_session_id")
+    lead_profile = _extract_profile(params)
     lead = Lead(
         name=params.get("name", "Unknown"),
         email=params.get("email"),
         phone=params.get("phone"),
         company=params.get("company"),
         notes=params.get("notes"),
+        lead_profile=lead_profile,
         status=LeadStatus.new,
         tags=params.get("tags", []),
         source_session_id=session_id,
@@ -104,6 +158,12 @@ async def update_lead_details(db: AsyncSession, params: dict) -> dict:
             if new_val != (old_val or ""):
                 setattr(lead, field, new_val)
                 changed[field] = new_val
+
+    existing_profile = lead.lead_profile if isinstance(lead.lead_profile, dict) else {}
+    updated_profile = _extract_profile(params, existing_profile)
+    if updated_profile != existing_profile:
+        lead.lead_profile = updated_profile
+        changed["lead_profile"] = "updated"
 
     await db.flush()
     return {

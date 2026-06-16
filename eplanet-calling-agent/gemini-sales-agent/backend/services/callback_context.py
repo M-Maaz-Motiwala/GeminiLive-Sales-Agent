@@ -255,6 +255,27 @@ def format_prior_call_context(ctx: dict[str, Any]) -> str:
         needs = lc.get("key_needs") or []
         if needs:
             lines.append(f"- Key needs: {', '.join(str(n) for n in needs)}")
+        profile = lc.get("lead_profile") or {}
+        if isinstance(profile, dict) and profile:
+            for key in (
+                "industry",
+                "service_required",
+                "budget",
+                "timeline",
+                "preferred_meeting_time",
+                "requirement",
+                "recommended_service_package",
+                "decision_maker_status",
+                "lead_temperature",
+                "recommended_next_step",
+            ):
+                val = profile.get(key)
+                if val:
+                    lines.append(f"- {key.replace('_', ' ').title()}: {val}")
+            for key in ("key_features", "objections_concerns"):
+                arr = profile.get(key) or []
+                if arr:
+                    lines.append(f"- {key.replace('_', ' ').title()}: {', '.join(str(x) for x in arr)}")
         lines.append("")
 
     lines.append(

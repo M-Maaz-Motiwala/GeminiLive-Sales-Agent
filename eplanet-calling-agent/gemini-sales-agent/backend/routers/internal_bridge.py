@@ -30,6 +30,8 @@ from backend.services.callback_context import (
     format_prior_call_context,
     load_inbound_callback_context,
 )
+from backend.db.models import PlatformSetting
+from backend.routers.system import SETTING_MASTER_PROMPT
 from backend.services.live_config import (
     agent_to_live_config,
     format_lead_context,
@@ -202,12 +204,20 @@ async def call_start(
     kb_block, kb_meta = await preload_agent_context(agent, direction=direction)
     meta["preloaded_kb"] = kb_meta
 
+    # Load global master prompt from platform settings (if set).
+    global_mp_result = await db.execute(
+        select(PlatformSetting).where(PlatformSetting.key == SETTING_MASTER_PROMPT)
+    )
+    global_mp_row = global_mp_result.scalar_one_or_none()
+    global_master_prompt = global_mp_row.value if global_mp_row else None
+
     config = agent_to_live_config(
         agent,
         kb_context=kb_block,
         lead_context=lead_context,
         prior_call_context=prior_call_context,
         direction=direction,
+        global_master_prompt=global_master_prompt,
     )
     config["session_id"] = db_session.id
 

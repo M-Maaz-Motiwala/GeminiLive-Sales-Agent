@@ -9,6 +9,13 @@ from backend.db.database import engine
 _PATCHES = (
     "ALTER TABLE agents ADD COLUMN IF NOT EXISTS inbound_prompt_template TEXT",
     "ALTER TABLE agents ADD COLUMN IF NOT EXISTS outbound_prompt_template TEXT",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS master_prompt_override TEXT",
+    """CREATE TABLE IF NOT EXISTS platform_settings (
+        key VARCHAR(255) PRIMARY KEY,
+        value TEXT,
+        updated_at TIMESTAMPTZ DEFAULT now()
+    )""",
+    "ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_profile JSONB DEFAULT '{}'::jsonb",
 )
 
 
