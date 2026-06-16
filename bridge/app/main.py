@@ -186,12 +186,27 @@ _DEFAULT_AUTO_GREETING = (
     "Greet the caller warmly in one natural sentence, introduce yourself by name, "
     "and ask how you can help. Use your preloaded knowledge context — do not stay silent."
 )
+_DEFAULT_OUTBOUND_AUTO_GREETING = (
+    "The outbound call just connected. Say ONLY a brief warm hello and your name — "
+    "one short sentence. Do NOT mention Trango Tech, pitch, ask for time, or ask about "
+    "their business yet. Stop and wait for the prospect to respond."
+)
 _auto_greet_env = os.getenv("AUTO_GREETING")
 AUTO_GREETING = (
     _auto_greet_env.strip()
     if _auto_greet_env is not None and _auto_greet_env.strip()
     else _DEFAULT_AUTO_GREETING
 )
+_AUTO_GREETING_CUSTOM = bool(_auto_greet_env is not None and _auto_greet_env.strip())
+
+
+def _auto_greeting_for_direction(call_direction: str) -> str:
+    """Return the kick prompt that triggers the model's first spoken turn."""
+    if _AUTO_GREETING_CUSTOM:
+        return AUTO_GREETING
+    if call_direction == "outbound":
+        return _DEFAULT_OUTBOUND_AUTO_GREETING
+    return _DEFAULT_AUTO_GREETING
 
 
 def _join_transcript_fragments(parts: list[str]) -> str:
@@ -1605,18 +1620,19 @@ class GeminiLiveBridge:
 
     async def _send_auto_greeting(self, call: CallSession, session) -> None:
         """Kick the model to speak first. Only marks greeting_sent after success."""
-        if not AUTO_GREETING or call.state.greeting_sent:
+        greeting = _auto_greeting_for_direction(call.state.call_direction)
+        if not greeting or call.state.greeting_sent:
             return
-        call.state.token_usage.add_text_context(AUTO_GREETING)
+        call.state.token_usage.add_text_context(greeting)
         await session.send_client_content(
             turns=types.Content(
                 role="user",
-                parts=[types.Part(text=AUTO_GREETING)],
+                parts=[types.Part(text=greeting)],
             ),
             turn_complete=True,
         )
         call.state.greeting_sent = True
-        logger.info("AUTO_GREETING sent")
+        logger.info("AUTO_GREETING sent (%s)", call.state.call_direction)
 
     async def _gemini_loop(self, call: CallSession) -> None:
         cfg = call.state.agent_config or {}

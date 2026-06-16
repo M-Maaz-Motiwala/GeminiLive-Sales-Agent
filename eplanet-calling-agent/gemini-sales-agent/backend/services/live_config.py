@@ -55,6 +55,14 @@ DEFAULT_VOICE_MASTER_PROMPT = """You are on a live phone call representing Trang
 
 """
 
+OUTBOUND_OPENING_RULES = """## Outbound cold-call opening (mandatory — style only, keep 9-stage funnel)
+- Speak first when the call connects, but your **first line is greeting only** — hello and your name. Then wait for their response.
+- **Next turns (still Stage 1):** ease in with a brief comfortable line → one-sentence Trango Tech intro → ask if they have a quick moment.
+- Do NOT combine greeting, company pitch, permission, and business questions into one opener.
+- Only after they agree to continue, move to Stage 2 (Discovery).
+- If they say no or not interested, thank them and end_call.
+"""
+
 # Runtime accessor — may be overridden by DB PlatformSetting at call time.
 # Code should use _get_master_prompt() rather than this constant directly.
 VOICE_MASTER_PROMPT = DEFAULT_VOICE_MASTER_PROMPT
@@ -195,6 +203,8 @@ def agent_to_live_config(
     agent_override = getattr(agent, "master_prompt_override", None) or None
     master = _get_master_prompt(agent_override or global_master_prompt)
     system_prompt = master + role_prompt
+    if direction == "outbound":
+        system_prompt += "\n\n" + OUTBOUND_OPENING_RULES
     if prior_call_context:
         system_prompt += "\n\n" + prior_call_context
     if lead_context:
