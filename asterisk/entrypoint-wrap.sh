@@ -49,6 +49,20 @@ sed -i \
   -e "s|@DIDWW_FROM_DOMAIN@|${DIDWW_FROM_DOMAIN}|g" \
   /etc/asterisk/pjsip.conf
 
+# Empty password breaks PJSIP auth object load — use IP-auth only (DIDWW whitelist).
+if [ -z "${DIDWW_PASS}" ]; then
+  awk '
+    /^\[didww_trunk_auth\]/ { skip=1; next }
+    skip && /^\[/ { skip=0 }
+    skip { next }
+    /^outbound_auth=didww_trunk_auth/ { next }
+    { print }
+  ' /etc/asterisk/pjsip.conf > /tmp/pjsip.conf && mv /tmp/pjsip.conf /etc/asterisk/pjsip.conf
+  echo "asterisk-entrypoint: DIDWW outbound via IP whitelist (no digest password set)" >&2
+else
+  echo "asterisk-entrypoint: DIDWW outbound auth user=${DIDWW_USER}" >&2
+fi
+
 awk -v rtp="$RTP_NAT" '
   /@EXTERNADDR_LINE@/ { print rtp; next }
   { print }

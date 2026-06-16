@@ -121,9 +121,13 @@ services:
     entrypoint: ["/bin/sh", "/templates/entrypoint-wrap.sh"]
     command: ["/usr/sbin/asterisk", "-vvvdddf", "-T", "-W", "-U", "asterisk", "-p"]
     env_file:
+      - .env
       - .host.env
     environment:
       - EXTERNAL_IP=${EXTERNAL_IP:-}
+      - DIDWW_SIP_USER=${DIDWW_SIP_USER:-}
+      - DIDWW_SIP_SECRET=${DIDWW_SIP_SECRET:-}
+      - DIDWW_FROM_DOMAIN=${DIDWW_FROM_DOMAIN:-}
     volumes:
       - ./asterisk/entrypoint-wrap.sh:/templates/entrypoint-wrap.sh:ro
       - ./asterisk/pjsip.conf.template:/templates/pjsip.conf.template:ro
