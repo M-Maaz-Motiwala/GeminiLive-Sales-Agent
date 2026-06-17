@@ -154,6 +154,52 @@ GEMINI_READY_TIMEOUT_SEC = float(os.getenv("GEMINI_READY_TIMEOUT_SEC", "20"))
 # network hiccups. Raise with OUTBOUND_RTP_STALL_SEC env var.
 OUTBOUND_RTP_STALL_SEC = float(os.getenv("OUTBOUND_RTP_STALL_SEC", "45"))
 
+_DIAL_PHASE_LABELS = {
+    "originating": "Starting outbound call…",
+    "ringing": "Ringing prospect…",
+    "connecting": "Prospect answered — connecting AI agent…",
+    "in_call": "In call with prospect",
+    "ended": "Call ended",
+}
+_OUTCOME_LABELS = {
+    "completed": "Call completed",
+    "answered": "Prospect answered",
+    "no_answer": "No answer",
+    "busy": "Line busy",
+    "rejected": "Call declined",
+    "failed": "Call failed",
+}
+
+
+def _hangup_outcome(
+    *,
+    cause: Optional[str],
+    cause_txt: Optional[str],
+    dial_phase: str,
+    had_media: bool,
+) -> str:
+    txt = (cause_txt or "").lower()
+    cause_i: Optional[int] = None
+    if cause is not None and str(cause).strip().isdigit():
+        cause_i = int(str(cause).strip())
+    if cause_i == 17 or "busy" in txt:
+        return "busy"
+    if cause_i in (19, 18) or "no answer" in txt or "noanswer" in txt:
+        return "no_answer"
+    if cause_i == 21 or "reject" in txt or "declin" in txt:
+        return "rejected"
+    if had_media or dial_phase == "in_call":
+        return "completed"
+    if dial_phase in ("ringing", "connecting", "originating"):
+        return "no_answer"
+    return "failed"
+
+
+def _dial_status_message(phase: str, outcome: Optional[str] = None) -> str:
+    if phase == "ended" and outcome:
+        return _OUTCOME_LABELS.get(outcome, _OUTCOME_LABELS["failed"])
+    return _DIAL_PHASE_LABELS.get(phase, phase.replace("_", " ").title())
+
 
 def use_inbound_ringback(call_direction: str) -> bool:
     """True for caller-dialed extensions (701–704). False for CRM-originated outbound."""
@@ -452,6 +498,11 @@ class CallState:
     agent_config: dict = field(default_factory=dict)
     call_started_at: float = 0.0
     call_direction: str = "inbound"  # inbound | outbound
+    dialed_endpoint: Optional[str] = None
+    channel_state: str = ""
+    dial_phase: str = ""
+    prospect_answered: bool = False
+    dial_outcome: Optional[str] = None
     hangup_event: Optional[str] = None
     hangup_cause: Optional[str] = None
     hangup_cause_txt: Optional[str] = None
@@ -511,6 +562,8 @@ class GeminiLiveBridge:
         self.platform_token = os.getenv("BRIDGE_INTERNAL_TOKEN", "")
         # Outbound originate context keyed by ARI channel id until StasisStart.
         self._pending_outbound: dict[str, dict[str, Any]] = {}
+        # Live + recent outbound dial tracking for CRM polling (channel_id -> status).
+        self._dial_status: dict[str, dict[str, Any]] = {}
 
     @staticmethod
     def _resolve_udp_host(host: str) -> str:
@@ -848,6 +901,8 @@ class GeminiLiveBridge:
                             await self._handle_channel_hangup_request(event)
                         elif etype == "ChannelLeftBridge":
                             await self._handle_channel_left_bridge(event)
+                        elif etype == "ChannelStateChange":
+                            await self._handle_channel_state_change(event)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -946,6 +1001,8 @@ class GeminiLiveBridge:
                     lead_id = int(args[2])
 
             call.state.call_direction = direction
+            call.state.dialed_endpoint = dialed_endpoint
+            call.state.channel_state = channel.get("state") or ""
 
             await self._platform_call_start(
                 call,
@@ -958,6 +1015,9 @@ class GeminiLiveBridge:
                 dialed_endpoint=dialed_endpoint,
                 campaign_lead_id=campaign_lead_id,
             )
+
+            if direction == "outbound":
+                await self._set_outbound_dial_phase(call, "ringing")
 
             inbound_ringback = use_inbound_ringback(direction)
 
@@ -1034,6 +1094,13 @@ class GeminiLiveBridge:
                 direction,
             )
 
+            if direction == "outbound":
+                if call.state.channel_state == "Up":
+                    call.state.prospect_answered = True
+                    await self._set_outbound_dial_phase(call, "connecting")
+                else:
+                    await self._set_outbound_dial_phase(call, "ringing")
+
             # 5) Answer and wire audio. In comfort_tone mode we already answered.
             if not (direction == "outbound" and connect_experience == "comfort_tone"):
                 await self.http.post(f"/channels/{channel_id}/answer")
@@ -1082,6 +1149,11 @@ class GeminiLiveBridge:
                 call.rtp_port,
                 time.monotonic() - ring_started,
             )
+
+            if direction == "outbound":
+                if call.state.channel_state == "Up":
+                    call.state.prospect_answered = True
+                await self._set_outbound_dial_phase(call, "in_call")
 
         except Exception:
             logger.exception("Failed to set up call %s", channel_id)
@@ -1165,6 +1237,25 @@ class GeminiLiveBridge:
                 return active
         return None
 
+    async def _handle_channel_state_change(self, event: dict) -> None:
+        channel = event.get("channel") or {}
+        channel_id = channel.get("id")
+        if not channel_id:
+            return
+        state = channel.get("state") or ""
+        call = self._find_call_for_channel(channel_id)
+        if call is None or channel_id != call.human_channel_id:
+            return
+        call.state.channel_state = state
+        if call.state.call_direction != "outbound":
+            return
+        if state == "Up":
+            call.state.prospect_answered = True
+            if call.state.dial_phase in ("", "originating", "ringing"):
+                await self._set_outbound_dial_phase(call, "connecting")
+        elif state == "Ringing" and call.state.dial_phase in ("", "originating"):
+            await self._set_outbound_dial_phase(call, "ringing")
+
     async def _handle_stasis_end(self, event: dict) -> None:
         channel_id = event["channel"]["id"]
         call = self._find_call_for_channel(channel_id)
@@ -1197,6 +1288,24 @@ class GeminiLiveBridge:
             return
         call = self._find_call_for_channel(channel_id)
         if call is None:
+            pending = self._pending_outbound.pop(channel_id, None)
+            if pending:
+                outcome = _hangup_outcome(
+                    cause=str(channel.get("cause")) if channel.get("cause") is not None else None,
+                    cause_txt=channel.get("cause_txt"),
+                    dial_phase="originating",
+                    had_media=False,
+                )
+                self._upsert_dial_status(
+                    channel_id,
+                    dial_phase="ended",
+                    outcome=outcome,
+                    hangup_cause=str(channel.get("cause")) if channel.get("cause") is not None else None,
+                    hangup_cause_txt=channel.get("cause_txt"),
+                    endpoint=pending.get("endpoint"),
+                    agent_slug=pending.get("agent_slug"),
+                    lead_id=pending.get("lead_id"),
+                )
             return
         if channel_id != call.human_channel_id:
             logger.info(
@@ -1262,6 +1371,9 @@ class GeminiLiveBridge:
             return
         call.state.cleaning_up = True
         call.state.active = False
+
+        self._finalize_outbound_dial_status(call)
+        await self._notify_platform_dial_status(call)
 
         # Flush any buffered transcript before ending the platform session.
         await self._flush_all_transcripts(call)
@@ -1338,6 +1450,98 @@ class GeminiLiveBridge:
             headers["X-Bridge-Token"] = self.platform_token
         return headers
 
+    def _upsert_dial_status(self, channel_id: str, **fields: Any) -> dict[str, Any]:
+        row = dict(self._dial_status.get(channel_id) or {})
+        row.update({k: v for k, v in fields.items() if v is not None})
+        row["channel_id"] = channel_id
+        row["updated_at"] = time.time()
+        phase = row.get("dial_phase") or row.get("phase") or "originating"
+        row["dial_phase"] = phase
+        outcome = row.get("outcome")
+        row["label"] = _dial_status_message(phase, outcome)
+        row["terminal"] = phase == "ended" or bool(outcome)
+        self._dial_status[channel_id] = row
+        return row
+
+    def get_dial_status(self, channel_id: str) -> Optional[dict[str, Any]]:
+        row = self._dial_status.get(channel_id)
+        if row:
+            return dict(row)
+        pending = self._pending_outbound.get(channel_id)
+        if pending:
+            return self._upsert_dial_status(
+                channel_id,
+                dial_phase="originating",
+                endpoint=pending.get("endpoint"),
+                agent_slug=pending.get("agent_slug"),
+                lead_id=pending.get("lead_id"),
+            )
+        return None
+
+    async def _notify_platform_dial_status(self, call: CallSession) -> None:
+        if not self.platform_url or not call.state.platform_session_id:
+            return
+        row = self.get_dial_status(call.human_channel_id) or {}
+        payload = {
+            "session_id": call.state.platform_session_id,
+            "channel_id": call.human_channel_id,
+            "dial_phase": row.get("dial_phase") or call.state.dial_phase,
+            "outcome": row.get("outcome"),
+            "hangup_cause": row.get("hangup_cause"),
+            "hangup_cause_txt": row.get("hangup_cause_txt"),
+            "message": row.get("label"),
+            "prospect_answered": call.state.prospect_answered,
+        }
+        try:
+            assert self.http is not None
+            await self.http.post(
+                f"{self.platform_url}/internal/calls/dial-status",
+                json=payload,
+                headers=self._platform_headers(),
+                timeout=5.0,
+            )
+        except Exception:
+            logger.debug("Dial status notify failed session=%s", call.state.platform_session_id)
+
+    def _finalize_outbound_dial_status(self, call: CallSession) -> None:
+        if call.state.call_direction != "outbound":
+            return
+        channel_id = call.human_channel_id or ""
+        if not channel_id:
+            return
+        phase = call.state.dial_phase or "ringing"
+        had_media = call.state.rtp_in_frames > 0 or call.state.prospect_answered
+        outcome = _hangup_outcome(
+            cause=call.state.hangup_cause,
+            cause_txt=call.state.hangup_cause_txt,
+            dial_phase=phase,
+            had_media=had_media,
+        )
+        call.state.dial_outcome = outcome
+        self._upsert_dial_status(
+            channel_id,
+            dial_phase="ended",
+            outcome=outcome,
+            hangup_cause=call.state.hangup_cause,
+            hangup_cause_txt=call.state.hangup_cause_txt,
+            session_id=call.state.platform_session_id,
+            prospect_answered=call.state.prospect_answered,
+        )
+
+    async def _set_outbound_dial_phase(self, call: CallSession, phase: str) -> None:
+        if call.state.call_direction != "outbound":
+            return
+        call.state.dial_phase = phase
+        self._upsert_dial_status(
+            call.human_channel_id,
+            dial_phase=phase,
+            session_id=call.state.platform_session_id,
+            endpoint=call.state.dialed_endpoint,
+            agent_slug=(call.state.agent_config or {}).get("agent_slug"),
+            prospect_answered=call.state.prospect_answered,
+        )
+        await self._notify_platform_dial_status(call)
+
     async def originate_call(
         self,
         *,
@@ -1388,6 +1592,13 @@ class GeminiLiveBridge:
             "connect_experience": (connect_experience or "auto_greeting"),
             "campaign_lead_id": campaign_lead_id,
         }
+        self._upsert_dial_status(
+            channel_id,
+            dial_phase="originating",
+            endpoint=endpoint,
+            agent_slug=agent_slug,
+            lead_id=lead_id,
+        )
         logger.info(
             "Originated outbound channel=%s agent=%s endpoint=%s lead=%s",
             channel_id,
@@ -1395,7 +1606,13 @@ class GeminiLiveBridge:
             endpoint,
             lead_id,
         )
-        return {"channel_id": channel_id, "status": "originating", "endpoint": endpoint}
+        return {
+            "channel_id": channel_id,
+            "status": "originating",
+            "endpoint": endpoint,
+            "dial_phase": "originating",
+            "label": _dial_status_message("originating"),
+        }
 
     async def _platform_call_start(
         self,
@@ -2201,6 +2418,9 @@ async def internal_status(_: None = Depends(_verify_bridge_token)):
                 "agent_slug": cfg.get("agent_slug"),
                 "rtp_in_frames": state.rtp_in_frames,
                 "rtp_stall_sec": round(stall_sec, 1),
+                "dial_phase": state.dial_phase or None,
+                "prospect_answered": state.prospect_answered,
+                "dialed_endpoint": state.dialed_endpoint,
             }
         )
     return {
@@ -2209,3 +2429,14 @@ async def internal_status(_: None = Depends(_verify_bridge_token)):
         "free_ports": len(bridge._free_ports),
         "calls": call_rows,
     }
+
+
+@app.get("/internal/dial-status/{channel_id}")
+async def internal_dial_status(
+    channel_id: str,
+    _: None = Depends(_verify_bridge_token),
+):
+    row = bridge.get_dial_status(channel_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Unknown dial channel")
+    return row

@@ -38,7 +38,7 @@ from backend.services.live_config import (
     preload_agent_context,
 )
 from backend.services.post_call import process_call_end
-from backend.services.session_metrics import finalize_session_metrics
+from backend.services.session_metrics import finalize_session_metrics, merge_session_meta
 from backend.services.token_meter import estimate_text_tokens
 
 logger = logging.getLogger(__name__)
@@ -76,6 +76,17 @@ class ToolCallIn(BaseModel):
     call_id: str
     tool_name: str
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+class DialStatusIn(BaseModel):
+    session_id: int
+    channel_id: str
+    dial_phase: str
+    outcome: Optional[str] = None
+    hangup_cause: Optional[str] = None
+    hangup_cause_txt: Optional[str] = None
+    message: Optional[str] = None
+    prospect_answered: Optional[bool] = None
 
 
 class CallEndIn(BaseModel):
@@ -140,6 +151,14 @@ async def call_start(
         meta["lead_id"] = body.lead_id
     if body.campaign_lead_id is not None:
         meta["campaign_lead_id"] = body.campaign_lead_id
+
+    if direction == "outbound":
+        meta["dial_status"] = {
+            "channel_id": body.channel_id,
+            "dial_phase": "ringing",
+            "label": "Ringing prospect…",
+            "prospect_answered": False,
+        }
 
     contact_meta = await build_call_contact_meta(
         db,
@@ -287,6 +306,23 @@ async def call_tool(
         "name": fr.name,
         "response": fr.response,
     }
+
+
+@router.post("/calls/dial-status")
+async def patch_dial_status(
+    body: DialStatusIn,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_verify_bridge_token),
+) -> dict[str, str]:
+    sess = await db.get(DBSession, body.session_id)
+    if sess is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    patch = {
+        "dial_status": body.model_dump(exclude_none=True),
+    }
+    sess.meta = merge_session_meta(sess.meta, patch)
+    await db.flush()
+    return {"status": "ok"}
 
 
 @router.post("/calls/end")

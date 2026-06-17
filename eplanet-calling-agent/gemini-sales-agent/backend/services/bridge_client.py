@@ -29,6 +29,33 @@ async def bridge_status() -> dict[str, Any]:
             return await resp.json()
 
 
+async def fetch_dial_status(channel_id: str) -> dict[str, Any]:
+    """Live outbound dial phase for a CRM-originated channel."""
+    base = (settings.bridge_url or "").rstrip("/")
+    if not base:
+        return {"error": "BRIDGE_URL not configured", "channel_id": channel_id}
+    headers: dict[str, str] = {}
+    if settings.bridge_internal_token:
+        headers["X-Bridge-Token"] = settings.bridge_internal_token
+    timeout = aiohttp.ClientTimeout(total=8)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(
+            f"{base}/internal/dial-status/{channel_id}",
+            headers=headers,
+        ) as resp:
+            if resp.status == 404:
+                return {
+                    "channel_id": channel_id,
+                    "dial_phase": "ended",
+                    "outcome": "failed",
+                    "terminal": True,
+                }
+            if resp.status >= 400:
+                text = await resp.text()
+                return {"channel_id": channel_id, "error": text, "dial_phase": "unknown"}
+            return await resp.json()
+
+
 async def originate_outbound(
     *,
     agent_slug: str,

@@ -12,10 +12,30 @@ export async function fetchOutboundAgents(token: string | null): Promise<Outboun
   return apiFetchList('/api/outbound/agents', token);
 }
 
+export type DialTrackerState = {
+  channel_id: string;
+  dial_phase: string;
+  label: string;
+  outcome?: string | null;
+  terminal?: boolean;
+  endpoint?: string;
+  session_id?: number;
+  session_status?: string;
+  prospect_answered?: boolean;
+  hangup_cause_txt?: string | null;
+};
+
+export async function fetchDialStatus(
+  token: string | null,
+  channelId: string,
+): Promise<DialTrackerState> {
+  return apiFetch(`/api/outbound/dial-status/${encodeURIComponent(channelId)}`, token);
+}
+
 export async function dialOutbound(
   token: string | null,
   body: { agent_id: number; lead_id?: number; endpoint?: string; connect_experience?: 'auto_greeting' | 'comfort_tone' },
-): Promise<{ status: string; endpoint: string; bridge?: { channel_id?: string } }> {
+): Promise<{ status: string; endpoint: string; bridge?: { channel_id?: string; dial_phase?: string; label?: string } }> {
   return apiFetch('/api/outbound/dial', token, {
     method: 'POST',
     body: JSON.stringify(body),

@@ -12,9 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.auth.deps import get_current_user
 from backend.config import get_settings
 from backend.db.database import get_db
-from backend.db.models import Agent, AgentType, Lead
-from backend.services.bridge_client import bridge_status
+from backend.db.models import Agent, AgentType, Lead, Session as DBSession
+from backend.services.bridge_client import bridge_status, fetch_dial_status, originate_outbound
 from backend.services.outbound_dialer import dial_one
+from backend.services.outbound_dial_status import enrich_dial_status
 from backend.services.outbound_policy import within_call_window
 from backend.services.session_reconcile import reconcile_stale_bridge_sessions
 
@@ -132,6 +133,42 @@ async def dial_outbound(
     except Exception as exc:
         logger.exception("Outbound dial failed")
         raise HTTPException(502, str(exc)) from exc
+
+
+@router.get("/dial-status/{channel_id}")
+async def get_dial_status(
+    channel_id: str,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Live outbound dial tracking for CRM UI (originating → ringing → in call → ended)."""
+    row = await fetch_dial_status(channel_id)
+    if row.get("error") and row.get("dial_phase") == "unknown":
+        raise HTTPException(502, row["error"])
+
+    session_id = row.get("session_id")
+    if session_id:
+        sess = await db.get(DBSession, session_id)
+        if sess and sess.meta and sess.meta.get("dial_status"):
+            db_row = sess.meta["dial_status"]
+            row = {**db_row, **{k: v for k, v in row.items() if v is not None}}
+            row["session_status"] = sess.status.value if hasattr(sess.status, "value") else str(sess.status)
+
+    if not row.get("session_id"):
+        recent = await db.execute(
+            select(DBSession).order_by(DBSession.started_at.desc()).limit(40)
+        )
+        for sess in recent.scalars():
+            if (sess.meta or {}).get("channel_id") == channel_id:
+                row["session_id"] = sess.id
+                row["session_status"] = (
+                    sess.status.value if hasattr(sess.status, "value") else str(sess.status)
+                )
+                if sess.meta and sess.meta.get("dial_status"):
+                    row = {**sess.meta["dial_status"], **row}
+                break
+
+    return enrich_dial_status(row)
 
 
 @router.post("/dial/batch")

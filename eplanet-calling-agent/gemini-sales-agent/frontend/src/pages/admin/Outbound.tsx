@@ -7,8 +7,10 @@ import {
   DEFAULT_LAB_ENDPOINT,
   dialBatch,
   dialOutbound,
+  fetchDialStatus,
   fetchOutboundAgents,
   fetchOutboundStatus,
+  type DialTrackerState,
   type OutboundAgent,
 } from '@/src/lib/outbound';
 import { PageHeader, GlassCard, BtnPrimary, Badge } from '@/src/components/admin/theme';
@@ -27,6 +29,7 @@ export default function Outbound() {
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [dialing, setDialing] = useState(false);
+  const [activeDial, setActiveDial] = useState<DialTrackerState | null>(null);
   const [loading, setLoading] = useState(true);
   const [bridgeInfo, setBridgeInfo] = useState<{ active_calls?: number; max_concurrent?: number }>({});
   const endpointInitialized = useRef(false);
@@ -77,6 +80,28 @@ export default function Outbound() {
     return () => clearInterval(poll);
   }, [token, searchParams]);
 
+  useEffect(() => {
+    if (!token || !activeDial?.channel_id || activeDial.terminal) return;
+    let cancelled = false;
+    const pollDial = async () => {
+      try {
+        const row = await fetchDialStatus(token, activeDial.channel_id);
+        if (cancelled) return;
+        setActiveDial(row);
+        setStatus(row.label);
+        if (row.terminal) load();
+      } catch {
+        /* keep last known state */
+      }
+    };
+    pollDial();
+    const id = setInterval(pollDial, 1500);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [token, activeDial?.channel_id, activeDial?.terminal]);
+
   const dial = async () => {
     if (!agentId) {
       setError('Select an outbound agent');
@@ -84,6 +109,7 @@ export default function Outbound() {
     }
     setError('');
     setStatus('');
+    setActiveDial(null);
     setDialing(true);
     try {
       const res = await dialOutbound(token, {
@@ -92,11 +118,20 @@ export default function Outbound() {
         ...(leadId !== '' ? { lead_id: Number(leadId) } : {}),
         connect_experience: connectExperience,
       });
-      setStatus(
-        `Dialing ${res.endpoint}… channel ${res.bridge?.channel_id ?? 'pending'}. ` +
-          `Answer on Zoiper extension ${info?.sip_user_1001 || '1001'} on your phone.`,
-      );
-      setTimeout(() => load(), 3000);
+      const channelId = res.bridge?.channel_id;
+      if (channelId) {
+        setActiveDial({
+          channel_id: channelId,
+          dial_phase: res.bridge?.dial_phase || 'originating',
+          label: res.bridge?.label || 'Starting outbound call…',
+          endpoint: res.endpoint,
+          terminal: false,
+        });
+        setStatus(res.bridge?.label || `Calling ${res.endpoint}…`);
+      } else {
+        setStatus(`Dialing ${res.endpoint}…`);
+      }
+      setTimeout(() => load(), 2000);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Dial failed');
     } finally {
@@ -322,7 +357,77 @@ export default function Outbound() {
             )}
 
             {error && <p className="text-sm text-red-400">{error}</p>}
-            {status && <p className="text-sm text-emerald-400/90">{status}</p>}
+
+            {activeDial && (
+              <div className="rounded-xl border border-white/10 bg-black/30 p-4 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Call progress</p>
+                  {!activeDial.terminal && (
+                    <Badge variant="live" className="text-[9px]">Live</Badge>
+                  )}
+                </div>
+                <p className="text-sm text-white font-medium">{activeDial.label}</p>
+                <p className="text-xs text-zinc-500 font-mono truncate">
+                  {activeDial.endpoint || endpoint || '—'}
+                </p>
+                <div className="flex flex-wrap gap-1.5 text-[10px]">
+                  {(['originating', 'ringing', 'connecting', 'in_call', 'ended'] as const).map(phase => {
+                    const order = ['originating', 'ringing', 'connecting', 'in_call', 'ended'];
+                    const current = activeDial.dial_phase;
+                    const ci = order.indexOf(current);
+                    const pi = order.indexOf(phase);
+                    const done = pi < ci || (phase === 'ended' && activeDial.terminal);
+                    const active = phase === current;
+                    const label =
+                      phase === 'originating'
+                        ? 'Starting'
+                        : phase === 'ringing'
+                          ? 'Ringing'
+                          : phase === 'connecting'
+                            ? 'Connecting'
+                            : phase === 'in_call'
+                              ? 'In call'
+                              : 'Ended';
+                    return (
+                      <span
+                        key={phase}
+                        className={`px-2 py-1 rounded-md border ${
+                          active
+                            ? 'border-orange-400/50 bg-orange-500/15 text-orange-200'
+                            : done
+                              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                              : 'border-white/5 text-zinc-600'
+                        }`}
+                      >
+                        {label}
+                      </span>
+                    );
+                  })}
+                </div>
+                {activeDial.outcome && (
+                  <p className="text-xs text-zinc-400">
+                    Result:{' '}
+                    <span className="text-white capitalize">{activeDial.outcome.replace(/_/g, ' ')}</span>
+                    {activeDial.hangup_cause_txt ? ` (${activeDial.hangup_cause_txt})` : ''}
+                  </p>
+                )}
+                {activeDial.session_id && (
+                  <Link
+                    to={`/admin/sessions/${activeDial.session_id}`}
+                    className="text-xs text-violet-400 hover:underline inline-block"
+                  >
+                    Open session #{activeDial.session_id} →
+                  </Link>
+                )}
+                {!isTrunk && !activeDial.terminal && (
+                  <p className="text-[10px] text-zinc-600">
+                    Lab mode: answer on Zoiper extension {sipUser1001} when it rings.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {status && !activeDial && <p className="text-sm text-emerald-400/90">{status}</p>}
           </GlassCard>
         </div>
 
