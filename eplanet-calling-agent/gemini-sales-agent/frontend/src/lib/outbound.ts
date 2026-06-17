@@ -52,11 +52,38 @@ export async function dialBatch(
   });
 }
 
+/** Persist active outbound dial across CRM navigation (same browser tab). */
+export const OUTBOUND_DIAL_STORAGE_KEY = 'aura_outbound_active_dial';
+
+export function loadStoredActiveDial(): Pick<DialTrackerState, 'channel_id' | 'endpoint'> | null {
+  try {
+    const raw = sessionStorage.getItem(OUTBOUND_DIAL_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed?.channel_id) return parsed;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+export function storeActiveDial(dial: DialTrackerState) {
+  sessionStorage.setItem(
+    OUTBOUND_DIAL_STORAGE_KEY,
+    JSON.stringify({ channel_id: dial.channel_id, endpoint: dial.endpoint }),
+  );
+}
+
+export function clearStoredActiveDial() {
+  sessionStorage.removeItem(OUTBOUND_DIAL_STORAGE_KEY);
+}
+
 export async function fetchOutboundStatus(token: string | null) {
   return apiFetch<{
     outbound_mode: string;
     call_window_allowed: boolean;
-    bridge?: { active_calls?: number; max_concurrent?: number };
+    bridge?: { active_calls?: number; max_concurrent?: number; calls?: any[] };
+    active_dials?: DialTrackerState[];
   }>('/api/outbound/status', token);
 }
 

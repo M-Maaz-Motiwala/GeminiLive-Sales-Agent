@@ -60,12 +60,32 @@ async def outbound_status(
     except Exception as exc:
         bridge = {"error": str(exc)}
     allowed, window_reason = within_call_window()
+
+    active_dials: list[dict] = []
+    for row in bridge.get("calls") or []:
+        if row.get("direction") == "outbound" and row.get("channel_id"):
+            active_dials.append(
+                enrich_dial_status(
+                    {
+                        "channel_id": row["channel_id"],
+                        "dial_phase": row.get("dial_phase") or "ringing",
+                        "endpoint": row.get("dialed_endpoint"),
+                        "session_id": row.get("platform_session_id"),
+                        "prospect_answered": row.get("prospect_answered"),
+                    }
+                )
+            )
+    for row in bridge.get("pending_dials") or []:
+        if row and row.get("channel_id"):
+            active_dials.append(enrich_dial_status(row))
+
     return {
         "outbound_mode": settings.outbound_mode,
         "call_window_allowed": allowed,
         "call_window_reason": window_reason,
         "max_concurrent": settings.max_concurrent_outbound,
         "bridge": bridge,
+        "active_dials": active_dials,
     }
 
 

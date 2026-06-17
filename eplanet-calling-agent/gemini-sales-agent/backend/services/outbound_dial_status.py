@@ -54,7 +54,7 @@ def status_message(phase: str, outcome: Optional[str] = None) -> str:
 
 
 def enrich_dial_status(row: dict[str, Any]) -> dict[str, Any]:
-    phase = row.get("dial_phase") or row.get("phase") or "originating"
+    phase = row.get("dial_phase") or row.get("phase") or "ringing"
     outcome = row.get("outcome")
     return {
         **row,

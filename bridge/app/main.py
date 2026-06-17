@@ -153,6 +153,7 @@ GEMINI_READY_TIMEOUT_SEC = float(os.getenv("GEMINI_READY_TIMEOUT_SEC", "20"))
 # an outbound call. 15 s was too aggressive for live PSTN calls with brief
 # network hiccups. Raise with OUTBOUND_RTP_STALL_SEC env var.
 OUTBOUND_RTP_STALL_SEC = float(os.getenv("OUTBOUND_RTP_STALL_SEC", "45"))
+OUTBOUND_ANSWER_TIMEOUT_SEC = float(os.getenv("OUTBOUND_ANSWER_TIMEOUT_SEC", "90"))
 
 _DIAL_PHASE_LABELS = {
     "originating": "Starting outbound call…",
@@ -503,6 +504,9 @@ class CallState:
     dial_phase: str = ""
     prospect_answered: bool = False
     dial_outcome: Optional[str] = None
+    connect_experience: str = "auto_greeting"
+    bridge_ready: bool = False
+    prospect_answer_event: Any = field(default=None, repr=False)
     hangup_event: Optional[str] = None
     hangup_cause: Optional[str] = None
     hangup_cause_txt: Optional[str] = None
@@ -1003,6 +1007,15 @@ class GeminiLiveBridge:
             call.state.call_direction = direction
             call.state.dialed_endpoint = dialed_endpoint
             call.state.channel_state = channel.get("state") or ""
+            call.state.connect_experience = connect_experience
+            call.state.prospect_answer_event = asyncio.Event()
+            if (
+                direction != "outbound"
+                and call.state.channel_state == "Up"
+                and connect_experience != "comfort_tone"
+            ):
+                call.state.prospect_answered = True
+                call.state.prospect_answer_event.set()
 
             await self._platform_call_start(
                 call,
@@ -1094,12 +1107,27 @@ class GeminiLiveBridge:
                 direction,
             )
 
-            if direction == "outbound":
-                if call.state.channel_state == "Up":
-                    call.state.prospect_answered = True
-                    await self._set_outbound_dial_phase(call, "connecting")
-                else:
-                    await self._set_outbound_dial_phase(call, "ringing")
+            # Outbound PSTN: keep "ringing" until the prospect picks up, then wire audio.
+            if direction == "outbound" and connect_experience != "comfort_tone":
+                await self._set_outbound_dial_phase(call, "ringing")
+                if not call.state.prospect_answered:
+                    answered = await self._wait_for_prospect_answer(
+                        call, timeout=OUTBOUND_ANSWER_TIMEOUT_SEC
+                    )
+                    if not answered:
+                        logger.warning(
+                            "Outbound no answer within %.0fs; hanging up %s",
+                            OUTBOUND_ANSWER_TIMEOUT_SEC,
+                            channel_id,
+                        )
+                        call.state.hangup_event = "NoAnswerTimeout"
+                        call.state.hangup_cause_txt = "no answer"
+                        await self.cleanup_call(call)
+                        try:
+                            await self.http.delete(f"/channels/{channel_id}")
+                        except Exception:
+                            pass
+                        return
 
             # 5) Answer and wire audio. In comfort_tone mode we already answered.
             if not (direction == "outbound" and connect_experience == "comfort_tone"):
@@ -1141,6 +1169,7 @@ class GeminiLiveBridge:
 
             await self._bootstrap_external_rtp(call, call.state.external_channel_id)
 
+            call.state.bridge_ready = True
             logger.info(
                 "Call ready: human=%s bridge=%s external=%s port=%d (setup %.1fs)",
                 call.state.human_channel_id,
@@ -1151,9 +1180,7 @@ class GeminiLiveBridge:
             )
 
             if direction == "outbound":
-                if call.state.channel_state == "Up":
-                    call.state.prospect_answered = True
-                await self._set_outbound_dial_phase(call, "in_call")
+                await self._sync_outbound_dial_phase(call)
 
         except Exception:
             logger.exception("Failed to set up call %s", channel_id)
@@ -1249,12 +1276,53 @@ class GeminiLiveBridge:
         call.state.channel_state = state
         if call.state.call_direction != "outbound":
             return
-        if state == "Up":
-            call.state.prospect_answered = True
-            if call.state.dial_phase in ("", "originating", "ringing"):
-                await self._set_outbound_dial_phase(call, "connecting")
-        elif state == "Ringing" and call.state.dial_phase in ("", "originating"):
-            await self._set_outbound_dial_phase(call, "ringing")
+        if state in ("Ring", "Ringing"):
+            if call.state.dial_phase in ("", "originating"):
+                await self._set_outbound_dial_phase(call, "ringing")
+        elif state == "Up" and call.state.connect_experience != "comfort_tone":
+            await self._mark_prospect_answered(call)
+
+    async def _mark_prospect_answered(self, call: CallSession) -> None:
+        if call.state.prospect_answered:
+            return
+        call.state.prospect_answered = True
+        ev = call.state.prospect_answer_event
+        if ev is not None and not ev.is_set():
+            ev.set()
+        logger.info("Prospect answered outbound channel=%s", call.human_channel_id)
+        await self._sync_outbound_dial_phase(call)
+
+    async def _wait_for_prospect_answer(self, call: CallSession, *, timeout: float) -> bool:
+        if call.state.prospect_answered:
+            return True
+        ev = call.state.prospect_answer_event
+        if ev is None:
+            return False
+        try:
+            await asyncio.wait_for(ev.wait(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
+
+    async def _sync_outbound_dial_phase(self, call: CallSession) -> None:
+        """ringing → connecting (picked up) → in_call (bridge live)."""
+        if call.state.call_direction != "outbound":
+            return
+        if call.state.dial_phase == "ended":
+            return
+        bridge_ready = bool(
+            call.state.bridge_ready
+            and call.state.bridge_id
+            and call.state.external_channel_id
+        )
+        if not call.state.prospect_answered:
+            phase = "ringing"
+        elif not bridge_ready:
+            phase = "connecting"
+        else:
+            phase = "in_call"
+        if phase != call.state.dial_phase:
+            await self._set_outbound_dial_phase(call, phase)
 
     async def _handle_stasis_end(self, event: dict) -> None:
         channel_id = event["channel"]["id"]
@@ -1293,7 +1361,7 @@ class GeminiLiveBridge:
                 outcome = _hangup_outcome(
                     cause=str(channel.get("cause")) if channel.get("cause") is not None else None,
                     cause_txt=channel.get("cause_txt"),
-                    dial_phase="originating",
+                    dial_phase="ringing",
                     had_media=False,
                 )
                 self._upsert_dial_status(
@@ -1455,7 +1523,7 @@ class GeminiLiveBridge:
         row.update({k: v for k, v in fields.items() if v is not None})
         row["channel_id"] = channel_id
         row["updated_at"] = time.time()
-        phase = row.get("dial_phase") or row.get("phase") or "originating"
+        phase = row.get("dial_phase") or row.get("phase") or "ringing"
         row["dial_phase"] = phase
         outcome = row.get("outcome")
         row["label"] = _dial_status_message(phase, outcome)
@@ -1471,7 +1539,7 @@ class GeminiLiveBridge:
         if pending:
             return self._upsert_dial_status(
                 channel_id,
-                dial_phase="originating",
+                dial_phase="ringing",
                 endpoint=pending.get("endpoint"),
                 agent_slug=pending.get("agent_slug"),
                 lead_id=pending.get("lead_id"),
@@ -1511,12 +1579,15 @@ class GeminiLiveBridge:
             return
         phase = call.state.dial_phase or "ringing"
         had_media = call.state.rtp_in_frames > 0 or call.state.prospect_answered
-        outcome = _hangup_outcome(
-            cause=call.state.hangup_cause,
-            cause_txt=call.state.hangup_cause_txt,
-            dial_phase=phase,
-            had_media=had_media,
-        )
+        if call.state.hangup_event == "NoAnswerTimeout":
+            outcome = "no_answer"
+        else:
+            outcome = _hangup_outcome(
+                cause=call.state.hangup_cause,
+                cause_txt=call.state.hangup_cause_txt,
+                dial_phase=phase,
+                had_media=had_media,
+            )
         call.state.dial_outcome = outcome
         self._upsert_dial_status(
             channel_id,
@@ -1594,7 +1665,7 @@ class GeminiLiveBridge:
         }
         self._upsert_dial_status(
             channel_id,
-            dial_phase="originating",
+            dial_phase="ringing",
             endpoint=endpoint,
             agent_slug=agent_slug,
             lead_id=lead_id,
@@ -1608,10 +1679,10 @@ class GeminiLiveBridge:
         )
         return {
             "channel_id": channel_id,
-            "status": "originating",
+            "status": "ringing",
             "endpoint": endpoint,
-            "dial_phase": "originating",
-            "label": _dial_status_message("originating"),
+            "dial_phase": "ringing",
+            "label": _dial_status_message("ringing"),
         }
 
     async def _platform_call_start(
@@ -2200,6 +2271,14 @@ class GeminiLiveBridge:
             )
         call.state.rtp_in_frames += 1
 
+        if (
+            call.state.call_direction == "outbound"
+            and call.state.connect_experience == "comfort_tone"
+            and not call.state.prospect_answered
+            and call.state.rtp_in_frames >= 20
+        ):
+            asyncio.create_task(self._mark_prospect_answered(call))
+
         # PCMU -> PCM16 8 kHz -> PCM16 16 kHz for Gemini.
         # libsamplerate (sinc_fastest) gives Gemini a clean upsampled
         # signal; audioop.ratecv loses HF detail and weakens VAD pickup
@@ -2428,6 +2507,11 @@ async def internal_status(_: None = Depends(_verify_bridge_token)):
         "max_concurrent": bridge.max_concurrent_calls,
         "free_ports": len(bridge._free_ports),
         "calls": call_rows,
+        "pending_dials": [
+            bridge.get_dial_status(cid)
+            for cid in bridge._pending_outbound
+            if bridge.get_dial_status(cid)
+        ],
     }
 
 

@@ -4,12 +4,15 @@ import { useAuth } from '@/src/auth/AuthContext';
 import { PhoneOutgoing, Radio, AlertCircle, Wifi, RefreshCw } from 'lucide-react';
 import { API_BASE, apiFetchList, apiFetchPublic } from '@/src/lib/api';
 import {
+  clearStoredActiveDial,
   DEFAULT_LAB_ENDPOINT,
   dialBatch,
   dialOutbound,
   fetchDialStatus,
   fetchOutboundAgents,
   fetchOutboundStatus,
+  loadStoredActiveDial,
+  storeActiveDial,
   type DialTrackerState,
   type OutboundAgent,
 } from '@/src/lib/outbound';
@@ -47,6 +50,25 @@ export default function Outbound() {
         fetchOutboundStatus(token).catch(() => ({})),
       ]);
       setBridgeInfo(obStatus?.bridge || {});
+      const liveDial =
+        (obStatus?.active_dials || []).find(d => !d.terminal) ||
+        (obStatus?.active_dials || [])[0];
+      if (liveDial?.channel_id) {
+        setActiveDial(prev => {
+          if (prev?.channel_id === liveDial.channel_id && prev?.terminal && liveDial.terminal) {
+            return prev;
+          }
+          if (!liveDial.terminal || !prev?.terminal) {
+            return liveDial;
+          }
+          return prev;
+        });
+        if (!liveDial.terminal) {
+          storeActiveDial(liveDial);
+        } else if (liveDial.terminal) {
+          clearStoredActiveDial();
+        }
+      }
       setAgents(agentList);
       setLeads(leadList);
       setSessions(
@@ -81,6 +103,20 @@ export default function Outbound() {
   }, [token, searchParams]);
 
   useEffect(() => {
+    if (!token) return;
+    const stored = loadStoredActiveDial();
+    if (!stored?.channel_id) return;
+    fetchDialStatus(token, stored.channel_id)
+      .then(row => {
+        setActiveDial(row);
+        setStatus(row.label);
+        if (row.terminal) clearStoredActiveDial();
+        else storeActiveDial(row);
+      })
+      .catch(() => {});
+  }, [token]);
+
+  useEffect(() => {
     if (!token || !activeDial?.channel_id || activeDial.terminal) return;
     let cancelled = false;
     const pollDial = async () => {
@@ -89,6 +125,8 @@ export default function Outbound() {
         if (cancelled) return;
         setActiveDial(row);
         setStatus(row.label);
+        storeActiveDial(row);
+        if (row.terminal) clearStoredActiveDial();
         if (row.terminal) load();
       } catch {
         /* keep last known state */
@@ -120,14 +158,16 @@ export default function Outbound() {
       });
       const channelId = res.bridge?.channel_id;
       if (channelId) {
-        setActiveDial({
+        const initial: DialTrackerState = {
           channel_id: channelId,
-          dial_phase: res.bridge?.dial_phase || 'originating',
-          label: res.bridge?.label || 'Starting outbound call…',
+          dial_phase: res.bridge?.dial_phase || 'ringing',
+          label: res.bridge?.label || 'Ringing prospect…',
           endpoint: res.endpoint,
           terminal: false,
-        });
-        setStatus(res.bridge?.label || `Calling ${res.endpoint}…`);
+        };
+        setActiveDial(initial);
+        storeActiveDial(initial);
+        setStatus(initial.label);
       } else {
         setStatus(`Dialing ${res.endpoint}…`);
       }
@@ -371,23 +411,21 @@ export default function Outbound() {
                   {activeDial.endpoint || endpoint || '—'}
                 </p>
                 <div className="flex flex-wrap gap-1.5 text-[10px]">
-                  {(['originating', 'ringing', 'connecting', 'in_call', 'ended'] as const).map(phase => {
-                    const order = ['originating', 'ringing', 'connecting', 'in_call', 'ended'];
-                    const current = activeDial.dial_phase;
+                  {(['ringing', 'connecting', 'in_call', 'ended'] as const).map(phase => {
+                    const order = ['ringing', 'connecting', 'in_call', 'ended'];
+                    const current = activeDial.dial_phase === 'originating' ? 'ringing' : activeDial.dial_phase;
                     const ci = order.indexOf(current);
                     const pi = order.indexOf(phase);
                     const done = pi < ci || (phase === 'ended' && activeDial.terminal);
                     const active = phase === current;
                     const label =
-                      phase === 'originating'
-                        ? 'Starting'
-                        : phase === 'ringing'
-                          ? 'Ringing'
-                          : phase === 'connecting'
-                            ? 'Connecting'
-                            : phase === 'in_call'
-                              ? 'In call'
-                              : 'Ended';
+                      phase === 'ringing'
+                        ? 'Ringing'
+                        : phase === 'connecting'
+                          ? 'Connecting'
+                          : phase === 'in_call'
+                            ? 'In call'
+                            : 'Ended';
                     return (
                       <span
                         key={phase}
