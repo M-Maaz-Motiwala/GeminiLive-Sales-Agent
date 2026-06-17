@@ -107,3 +107,28 @@ async def originate_outbound(
             if not isinstance(body, dict):
                 return {"status": "ok", "raw": body}
             return body
+
+
+async def hangup_outbound(channel_id: str) -> dict[str, Any]:
+    """Ask the bridge to hang up an outbound channel."""
+    base = (settings.bridge_url or "").rstrip("/")
+    if not base:
+        raise RuntimeError("BRIDGE_URL is not configured")
+    headers: dict[str, str] = {}
+    if settings.bridge_internal_token:
+        headers["X-Bridge-Token"] = settings.bridge_internal_token
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(
+            f"{base}/internal/hangup/{channel_id}",
+            headers=headers,
+        ) as resp:
+            if resp.status == 404:
+                raise RuntimeError("Call not found or already ended")
+            if resp.status >= 400:
+                text = await resp.text()
+                raise RuntimeError(text or "Bridge hangup failed")
+            body = await resp.json()
+            if isinstance(body, dict):
+                return body
+            return {"status": "ended", "channel_id": channel_id}

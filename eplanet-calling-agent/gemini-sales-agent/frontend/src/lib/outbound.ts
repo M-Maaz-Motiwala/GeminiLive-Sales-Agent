@@ -32,6 +32,15 @@ export async function fetchDialStatus(
   return apiFetch(`/api/outbound/dial-status/${encodeURIComponent(channelId)}`, token);
 }
 
+export async function hangupOutboundDial(
+  token: string | null,
+  channelId: string,
+): Promise<DialTrackerState> {
+  return apiFetch(`/api/outbound/hangup/${encodeURIComponent(channelId)}`, token, {
+    method: 'POST',
+  });
+}
+
 export async function dialOutbound(
   token: string | null,
   body: { agent_id: number; lead_id?: number; endpoint?: string; connect_experience?: 'auto_greeting' | 'comfort_tone' },
@@ -52,30 +61,54 @@ export async function dialBatch(
   });
 }
 
-/** Persist active outbound dial across CRM navigation (same browser tab). */
-export const OUTBOUND_DIAL_STORAGE_KEY = 'aura_outbound_active_dial';
+/** Persist active outbound dials across CRM navigation (same browser tab). */
+export const OUTBOUND_DIALS_STORAGE_KEY = 'aura_outbound_active_dials';
 
-export function loadStoredActiveDial(): Pick<DialTrackerState, 'channel_id' | 'endpoint'> | null {
+export function loadStoredActiveDials(): DialTrackerState[] {
   try {
-    const raw = sessionStorage.getItem(OUTBOUND_DIAL_STORAGE_KEY);
-    if (!raw) return null;
+    const raw = sessionStorage.getItem(OUTBOUND_DIALS_STORAGE_KEY);
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    if (parsed?.channel_id) return parsed;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((d: DialTrackerState) => d?.channel_id);
   } catch {
-    /* ignore */
+    return [];
   }
-  return null;
 }
 
-export function storeActiveDial(dial: DialTrackerState) {
+export function storeActiveDials(dials: DialTrackerState[]) {
+  const live = dials.filter(d => d.channel_id && !d.terminal);
+  if (!live.length) {
+    sessionStorage.removeItem(OUTBOUND_DIALS_STORAGE_KEY);
+    return;
+  }
   sessionStorage.setItem(
-    OUTBOUND_DIAL_STORAGE_KEY,
-    JSON.stringify({ channel_id: dial.channel_id, endpoint: dial.endpoint }),
+    OUTBOUND_DIALS_STORAGE_KEY,
+    JSON.stringify(live.map(d => ({ channel_id: d.channel_id, endpoint: d.endpoint }))),
   );
 }
 
+export function clearStoredActiveDials() {
+  sessionStorage.removeItem(OUTBOUND_DIALS_STORAGE_KEY);
+}
+
+/** @deprecated use loadStoredActiveDials */
+export const OUTBOUND_DIAL_STORAGE_KEY = OUTBOUND_DIALS_STORAGE_KEY;
+
+/** @deprecated */
+export function loadStoredActiveDial(): Pick<DialTrackerState, 'channel_id' | 'endpoint'> | null {
+  const rows = loadStoredActiveDials();
+  return rows[0] ?? null;
+}
+
+/** @deprecated */
+export function storeActiveDial(dial: DialTrackerState) {
+  storeActiveDials([dial]);
+}
+
+/** @deprecated */
 export function clearStoredActiveDial() {
-  sessionStorage.removeItem(OUTBOUND_DIAL_STORAGE_KEY);
+  clearStoredActiveDials();
 }
 
 export async function fetchOutboundStatus(token: string | null) {
@@ -89,3 +122,9 @@ export async function fetchOutboundStatus(token: string | null) {
 
 /** Lab default when lead has no phone — matches OUTBOUND_LAB_ENDPOINT */
 export const DEFAULT_LAB_ENDPOINT = 'PJSIP/1001';
+
+export const DIAL_PHASE_ORDER = ['ringing', 'connecting', 'in_call', 'ended'] as const;
+
+export function normalizeDialPhase(phase: string): string {
+  return phase === 'originating' ? 'ringing' : phase;
+}

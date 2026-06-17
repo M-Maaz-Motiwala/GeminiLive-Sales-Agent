@@ -1,22 +1,134 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/src/auth/AuthContext';
-import { PhoneOutgoing, Radio, AlertCircle, Wifi, RefreshCw } from 'lucide-react';
+import { PhoneOutgoing, Radio, AlertCircle, Wifi, RefreshCw, PhoneOff } from 'lucide-react';
 import { API_BASE, apiFetchList, apiFetchPublic } from '@/src/lib/api';
 import {
-  clearStoredActiveDial,
+  clearStoredActiveDials,
   DEFAULT_LAB_ENDPOINT,
+  DIAL_PHASE_ORDER,
   dialBatch,
   dialOutbound,
   fetchDialStatus,
   fetchOutboundAgents,
   fetchOutboundStatus,
-  loadStoredActiveDial,
-  storeActiveDial,
+  hangupOutboundDial,
+  loadStoredActiveDials,
+  normalizeDialPhase,
+  storeActiveDials,
   type DialTrackerState,
   type OutboundAgent,
 } from '@/src/lib/outbound';
 import { PageHeader, GlassCard, BtnPrimary, Badge } from '@/src/components/admin/theme';
+
+function mergeDials(prev: DialTrackerState[], incoming: DialTrackerState[]): DialTrackerState[] {
+  const map = new Map(prev.map(d => [d.channel_id, d]));
+  for (const row of incoming) {
+    if (!row.channel_id) continue;
+    const existing = map.get(row.channel_id);
+    if (existing?.terminal && row.terminal) {
+      map.set(row.channel_id, existing);
+    } else {
+      map.set(row.channel_id, { ...existing, ...row });
+    }
+  }
+  return Array.from(map.values());
+}
+
+function DialProgressCard({
+  dial,
+  isTrunk,
+  sipUser1001,
+  hangingUp,
+  onHangup,
+}: {
+  dial: DialTrackerState;
+  isTrunk: boolean;
+  sipUser1001: string;
+  hangingUp: boolean;
+  onHangup: (channelId: string) => void;
+}) {
+  const current = normalizeDialPhase(dial.dial_phase);
+  const ci = DIAL_PHASE_ORDER.indexOf(current as (typeof DIAL_PHASE_ORDER)[number]);
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-black/30 p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm text-white font-medium truncate">{dial.label}</p>
+          <p className="text-xs text-zinc-500 font-mono truncate mt-0.5">
+            {dial.endpoint || '—'}
+          </p>
+        </div>
+        {!dial.terminal && (
+          <div className="flex items-center gap-2 shrink-0">
+            <Badge variant="live" className="text-[9px]">Live</Badge>
+            <button
+              type="button"
+              disabled={hangingUp}
+              onClick={() => onHangup(dial.channel_id)}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium border border-red-500/40 text-red-300 hover:bg-red-500/10 disabled:opacity-50"
+            >
+              <PhoneOff className="w-3.5 h-3.5" />
+              End call
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-1.5 text-[10px]">
+        {DIAL_PHASE_ORDER.map(phase => {
+          const pi = DIAL_PHASE_ORDER.indexOf(phase);
+          const done = pi < ci || (phase === 'ended' && dial.terminal);
+          const active = phase === current;
+          const label =
+            phase === 'ringing'
+              ? 'Ringing'
+              : phase === 'connecting'
+                ? 'Connecting'
+                : phase === 'in_call'
+                  ? 'In call'
+                  : 'Ended';
+          return (
+            <span
+              key={phase}
+              className={`px-2 py-1 rounded-md border ${
+                active
+                  ? 'border-orange-400/50 bg-orange-500/15 text-orange-200'
+                  : done
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                    : 'border-white/5 text-zinc-600'
+              }`}
+            >
+              {label}
+            </span>
+          );
+        })}
+      </div>
+
+      {dial.outcome && (
+        <p className="text-xs text-zinc-400">
+          Result:{' '}
+          <span className="text-white capitalize">{dial.outcome.replace(/_/g, ' ')}</span>
+          {dial.hangup_cause_txt ? ` (${dial.hangup_cause_txt})` : ''}
+        </p>
+      )}
+      {dial.session_id && (
+        <Link
+          to={`/admin/sessions/${dial.session_id}`}
+          className="text-xs text-violet-400 hover:underline inline-block"
+        >
+          Open session #{dial.session_id} →
+        </Link>
+      )}
+      {!isTrunk && !dial.terminal && (
+        <p className="text-[10px] text-zinc-600">
+          Lab mode: answer on Zoiper extension {sipUser1001} when it rings.
+        </p>
+      )}
+    </div>
+  );
+}
 
 export default function Outbound() {
   const { token } = useAuth();
@@ -32,11 +144,22 @@ export default function Outbound() {
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [dialing, setDialing] = useState(false);
-  const [activeDial, setActiveDial] = useState<DialTrackerState | null>(null);
+  const [activeDials, setActiveDials] = useState<DialTrackerState[]>([]);
+  const [hangingUpId, setHangingUpId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [bridgeInfo, setBridgeInfo] = useState<{ active_calls?: number; max_concurrent?: number }>({});
   const endpointInitialized = useRef(false);
   const isTrunk = (info?.outbound_mode || '').toLowerCase() === 'trunk';
+
+  const liveDials = activeDials.filter(d => !d.terminal);
+
+  const syncDials = useCallback((updater: DialTrackerState[] | ((prev: DialTrackerState[]) => DialTrackerState[])) => {
+    setActiveDials(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      storeActiveDials(next);
+      return next;
+    });
+  }, []);
 
   const load = async () => {
     if (!token) return;
@@ -50,24 +173,9 @@ export default function Outbound() {
         fetchOutboundStatus(token).catch(() => ({})),
       ]);
       setBridgeInfo(obStatus?.bridge || {});
-      const liveDial =
-        (obStatus?.active_dials || []).find(d => !d.terminal) ||
-        (obStatus?.active_dials || [])[0];
-      if (liveDial?.channel_id) {
-        setActiveDial(prev => {
-          if (prev?.channel_id === liveDial.channel_id && prev?.terminal && liveDial.terminal) {
-            return prev;
-          }
-          if (!liveDial.terminal || !prev?.terminal) {
-            return liveDial;
-          }
-          return prev;
-        });
-        if (!liveDial.terminal) {
-          storeActiveDial(liveDial);
-        } else if (liveDial.terminal) {
-          clearStoredActiveDial();
-        }
+      const fromBridge = (obStatus?.active_dials || []).filter(d => !d.terminal);
+      if (fromBridge.length) {
+        syncDials(prev => mergeDials(prev, fromBridge));
       }
       setAgents(agentList);
       setLeads(leadList);
@@ -104,41 +212,75 @@ export default function Outbound() {
 
   useEffect(() => {
     if (!token) return;
-    const stored = loadStoredActiveDial();
-    if (!stored?.channel_id) return;
-    fetchDialStatus(token, stored.channel_id)
-      .then(row => {
-        setActiveDial(row);
-        setStatus(row.label);
-        if (row.terminal) clearStoredActiveDial();
-        else storeActiveDial(row);
-      })
-      .catch(() => {});
-  }, [token]);
+    const stored = loadStoredActiveDials();
+    if (!stored.length) return;
+    Promise.all(
+      stored.map(s =>
+        fetchDialStatus(token, s.channel_id).catch(() => ({
+          ...s,
+          dial_phase: 'ended',
+          label: 'Call ended',
+          terminal: true,
+        })),
+      ),
+    ).then(rows => {
+      const live = rows.filter(r => !r.terminal);
+      syncDials(prev => mergeDials(prev, rows));
+      if (live.length) setStatus(live[live.length - 1].label);
+      if (!live.length) clearStoredActiveDials();
+    });
+  }, [token, syncDials]);
 
   useEffect(() => {
-    if (!token || !activeDial?.channel_id || activeDial.terminal) return;
+    if (!token || !liveDials.length) return;
     let cancelled = false;
-    const pollDial = async () => {
+    const pollAll = async () => {
       try {
-        const row = await fetchDialStatus(token, activeDial.channel_id);
+        const rows = await Promise.all(
+          liveDials.map(d =>
+            fetchDialStatus(token, d.channel_id).catch(() => d),
+          ),
+        );
         if (cancelled) return;
-        setActiveDial(row);
-        setStatus(row.label);
-        storeActiveDial(row);
-        if (row.terminal) clearStoredActiveDial();
-        if (row.terminal) load();
+        syncDials(prev => mergeDials(prev, rows));
+        const stillLive = rows.filter(r => !r.terminal);
+        if (stillLive.length) {
+          setStatus(stillLive[stillLive.length - 1].label);
+        } else {
+          clearStoredActiveDials();
+          load();
+        }
       } catch {
-        /* keep last known state */
+        /* keep last known */
       }
     };
-    pollDial();
-    const id = setInterval(pollDial, 1500);
+    pollAll();
+    const id = setInterval(pollAll, 1500);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [token, activeDial?.channel_id, activeDial?.terminal]);
+  }, [token, liveDials.map(d => d.channel_id).join(','), syncDials]);
+
+  const hangup = async (channelId: string) => {
+    if (!token) return;
+    setHangingUpId(channelId);
+    setError('');
+    try {
+      const row = await hangupOutboundDial(token, channelId);
+      syncDials(prev =>
+        mergeDials(prev, [{ ...row, channel_id: channelId, terminal: true, dial_phase: 'ended' }]),
+      );
+      setTimeout(() => {
+        syncDials(prev => prev.filter(d => d.channel_id !== channelId || !d.terminal));
+        load();
+      }, 2500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Hangup failed');
+    } finally {
+      setHangingUpId(null);
+    }
+  };
 
   const dial = async () => {
     if (!agentId) {
@@ -147,7 +289,6 @@ export default function Outbound() {
     }
     setError('');
     setStatus('');
-    setActiveDial(null);
     setDialing(true);
     try {
       const res = await dialOutbound(token, {
@@ -165,8 +306,7 @@ export default function Outbound() {
           endpoint: res.endpoint,
           terminal: false,
         };
-        setActiveDial(initial);
-        storeActiveDial(initial);
+        syncDials(prev => mergeDials(prev, [initial]));
         setStatus(initial.label);
       } else {
         setStatus(`Dialing ${res.endpoint}…`);
@@ -190,7 +330,11 @@ export default function Outbound() {
     <div className="p-6 lg:p-8 max-w-5xl">
       <PageHeader
         title="Outbound Calls"
-        subtitle="Place cold calls from the CRM — your mobile Zoiper (ext 1001) receives the call"
+        subtitle={
+          isTrunk
+            ? 'Place outbound calls via PSTN trunk — live progress for each active dial'
+            : 'Place cold calls from the CRM — your mobile Zoiper (ext 1001) receives the call'
+        }
         action={
           <div className="flex items-center gap-2">
             <button
@@ -211,63 +355,94 @@ export default function Outbound() {
         }
       />
 
+      {liveDials.length > 0 && (
+        <GlassCard className="p-5 mb-6 space-y-3 border-orange-500/20">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-white">
+              Active calls ({liveDials.length})
+            </h2>
+            {bridgeInfo.max_concurrent != null && (
+              <span className="text-[10px] text-zinc-500">
+                Bridge {bridgeInfo.active_calls ?? 0} / {bridgeInfo.max_concurrent}
+              </span>
+            )}
+          </div>
+          <div className="space-y-3">
+            {liveDials.map(dial => (
+              <DialProgressCard
+                key={dial.channel_id}
+                dial={dial}
+                isTrunk={isTrunk}
+                sipUser1001={sipUser1001}
+                hangingUp={hangingUpId === dial.channel_id}
+                onHangup={hangup}
+              />
+            ))}
+          </div>
+        </GlassCard>
+      )}
+
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
-          <GlassCard className="p-6 space-y-4 border-orange-500/15">
-            <div className="flex items-center gap-2 text-orange-300">
-              <PhoneOutgoing className="w-5 h-5" />
-              <h2 className="text-sm font-semibold text-white">1. Register phone (prospect)</h2>
-            </div>
-            <dl className="grid sm:grid-cols-2 gap-2 text-sm">
-              {[
-                ['SIP server', sipServer],
-                ['Port', `${info?.sip_port || 5060} UDP`],
-                ['Codec', info?.sip_codec_label || 'G.711 μ-law'],
-                ['Password rule', '{ext}pass (e.g. 1003pass)'],
-              ].map(([k, v]) => (
-                <div key={k} className="flex justify-between gap-2 p-2 rounded-lg bg-black/30 border border-white/5">
-                  <dt className="text-zinc-500 text-xs">{k}</dt>
-                  <dd className="font-mono text-orange-300/90 text-xs text-right">{v}</dd>
-                </div>
-              ))}
-            </dl>
-            <div className="overflow-x-auto rounded-lg border border-white/10">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-white/10 bg-white/[0.02]">
-                    <th className="p-2 text-left text-zinc-500">Ext</th>
-                    <th className="p-2 text-left text-zinc-500">Username</th>
-                    <th className="p-2 text-left text-zinc-500">Password</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(info?.lab_extensions as { extension: string; username: string; password: string }[] | undefined)?.map(
-                    row => (
-                      <tr key={row.extension} className="border-b border-white/5 last:border-0">
-                        <td className="p-2 font-mono text-white">{row.extension}</td>
-                        <td className="p-2 font-mono text-orange-300/90">{row.username}</td>
-                        <td className="p-2 font-mono text-zinc-400">{row.password}</td>
-                      </tr>
-                    ),
-                  ) ?? (
-                    <tr>
-                      <td className="p-2 font-mono text-white">1001</td>
-                      <td className="p-2 font-mono text-orange-300/90">{sipUser1001}</td>
-                      <td className="p-2 font-mono text-zinc-400">{sipPass1001}</td>
+          {!isTrunk && (
+            <GlassCard className="p-6 space-y-4 border-orange-500/15">
+              <div className="flex items-center gap-2 text-orange-300">
+                <PhoneOutgoing className="w-5 h-5" />
+                <h2 className="text-sm font-semibold text-white">1. Register phone (prospect)</h2>
+              </div>
+              <dl className="grid sm:grid-cols-2 gap-2 text-sm">
+                {[
+                  ['SIP server', sipServer],
+                  ['Port', `${info?.sip_port || 5060} UDP`],
+                  ['Codec', info?.sip_codec_label || 'G.711 μ-law'],
+                  ['Password rule', '{ext}pass (e.g. 1003pass)'],
+                ].map(([k, v]) => (
+                  <div key={k} className="flex justify-between gap-2 p-2 rounded-lg bg-black/30 border border-white/5">
+                    <dt className="text-zinc-500 text-xs">{k}</dt>
+                    <dd className="font-mono text-orange-300/90 text-xs text-right">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+              <div className="overflow-x-auto rounded-lg border border-white/10">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-white/10 bg-white/[0.02]">
+                      <th className="p-2 text-left text-zinc-500">Ext</th>
+                      <th className="p-2 text-left text-zinc-500">Username</th>
+                      <th className="p-2 text-left text-zinc-500">Password</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-            <p className="text-[10px] text-zinc-600 flex items-center gap-1">
-              <Wifi className="w-3 h-3" /> One Zoiper account per phone. Same Wi‑Fi as this PC — use SIP server above, not 127.0.0.1. Wait for Registered.
-            </p>
-          </GlassCard>
+                  </thead>
+                  <tbody>
+                    {(info?.lab_extensions as { extension: string; username: string; password: string }[] | undefined)?.map(
+                      row => (
+                        <tr key={row.extension} className="border-b border-white/5 last:border-0">
+                          <td className="p-2 font-mono text-white">{row.extension}</td>
+                          <td className="p-2 font-mono text-orange-300/90">{row.username}</td>
+                          <td className="p-2 font-mono text-zinc-400">{row.password}</td>
+                        </tr>
+                      ),
+                    ) ?? (
+                      <tr>
+                        <td className="p-2 font-mono text-white">1001</td>
+                        <td className="p-2 font-mono text-orange-300/90">{sipUser1001}</td>
+                        <td className="p-2 font-mono text-zinc-400">{sipPass1001}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[10px] text-zinc-600 flex items-center gap-1">
+                <Wifi className="w-3 h-3" /> One Zoiper account per phone. Same Wi‑Fi as this PC — use SIP server above, not 127.0.0.1. Wait for Registered.
+              </p>
+            </GlassCard>
+          )}
 
           <GlassCard className="p-6 space-y-4">
             <div className="flex items-center gap-2 text-violet-300">
               <PhoneOutgoing className="w-5 h-5" />
-              <h2 className="text-sm font-semibold text-white">2. Place call from CRM</h2>
+              <h2 className="text-sm font-semibold text-white">
+                {isTrunk ? 'Place call from CRM' : '2. Place call from CRM'}
+              </h2>
             </div>
 
             {agents.length === 0 ? (
@@ -324,9 +499,6 @@ export default function Outbound() {
                     <option value="auto_greeting">Auto greeting (fast agent hello)</option>
                     <option value="comfort_tone">Comfort tone (hold tone while connecting)</option>
                   </select>
-                  <p className="text-[10px] text-zinc-600">
-                    Auto greeting minimizes delay if Gemini is ready fast. Comfort tone avoids dead-air by answering immediately with brief hold audio.
-                  </p>
                 </label>
 
                 <label className="block space-y-1.5">
@@ -339,19 +511,6 @@ export default function Outbound() {
                     onChange={e => setEndpoint(e.target.value)}
                     placeholder={isTrunk ? '+12105551234 or +923351234567' : DEFAULT_LAB_ENDPOINT}
                   />
-                  <p className="text-[10px] text-zinc-600">
-                    {isTrunk ? (
-                      <>
-                        Trunk mode: enter <code className="text-zinc-400">+countrycode…</code> (e.g.{' '}
-                        <code className="text-zinc-400">+92335…</code>). Or select a lead with a phone number — leave
-                        blank to use the lead&apos;s phone.
-                      </>
-                    ) : (
-                      <>
-                        Lab: keep <code className="text-zinc-400">PJSIP/1001</code> when using mobile Zoiper as 1001.
-                      </>
-                    )}
-                  </p>
                 </label>
 
                 <div className="flex flex-wrap gap-2">
@@ -362,110 +521,37 @@ export default function Outbound() {
                   >
                     {dialing ? 'Originating…' : 'Dial now'}
                   </BtnPrimary>
-                  <BtnPrimary
-                    onClick={async () => {
-                      if (!agentId) return;
-                      setDialing(true);
-                      setError('');
-                      try {
-                        const res = await dialBatch(token, {
-                          agent_id: Number(agentId),
-                          endpoints: ['PJSIP/1001', 'PJSIP/1002'],
-                        });
-                        setStatus(
-                          `Batch: ${res.dialed} ok, ${res.failed} failed — answer both phones.`,
-                        );
-                        load();
-                      } catch (e) {
-                        setError(e instanceof Error ? e.message : 'Batch failed');
-                      } finally {
-                        setDialing(false);
-                      }
-                    }}
-                    disabled={dialing || !agentId}
-                    className="bg-violet-700 hover:bg-violet-600"
-                  >
-                    Dial 1001 + 1002
-                  </BtnPrimary>
+                  {!isTrunk && (
+                    <BtnPrimary
+                      onClick={async () => {
+                        if (!agentId) return;
+                        setDialing(true);
+                        setError('');
+                        try {
+                          const res = await dialBatch(token, {
+                            agent_id: Number(agentId),
+                            endpoints: ['PJSIP/1001', 'PJSIP/1002'],
+                          });
+                          setStatus(`Batch: ${res.dialed} ok, ${res.failed} failed`);
+                          load();
+                        } catch (e) {
+                          setError(e instanceof Error ? e.message : 'Batch failed');
+                        } finally {
+                          setDialing(false);
+                        }
+                      }}
+                      disabled={dialing || !agentId}
+                      className="bg-violet-700 hover:bg-violet-600"
+                    >
+                      Dial 1001 + 1002
+                    </BtnPrimary>
+                  )}
                 </div>
-                {bridgeInfo.max_concurrent != null && (
-                  <p className="text-[10px] text-zinc-600">
-                    Bridge capacity: {bridgeInfo.active_calls ?? 0} / {bridgeInfo.max_concurrent} active
-                  </p>
-                )}
               </>
             )}
 
             {error && <p className="text-sm text-red-400">{error}</p>}
-
-            {activeDial && (
-              <div className="rounded-xl border border-white/10 bg-black/30 p-4 space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Call progress</p>
-                  {!activeDial.terminal && (
-                    <Badge variant="live" className="text-[9px]">Live</Badge>
-                  )}
-                </div>
-                <p className="text-sm text-white font-medium">{activeDial.label}</p>
-                <p className="text-xs text-zinc-500 font-mono truncate">
-                  {activeDial.endpoint || endpoint || '—'}
-                </p>
-                <div className="flex flex-wrap gap-1.5 text-[10px]">
-                  {(['ringing', 'connecting', 'in_call', 'ended'] as const).map(phase => {
-                    const order = ['ringing', 'connecting', 'in_call', 'ended'];
-                    const current = activeDial.dial_phase === 'originating' ? 'ringing' : activeDial.dial_phase;
-                    const ci = order.indexOf(current);
-                    const pi = order.indexOf(phase);
-                    const done = pi < ci || (phase === 'ended' && activeDial.terminal);
-                    const active = phase === current;
-                    const label =
-                      phase === 'ringing'
-                        ? 'Ringing'
-                        : phase === 'connecting'
-                          ? 'Connecting'
-                          : phase === 'in_call'
-                            ? 'In call'
-                            : 'Ended';
-                    return (
-                      <span
-                        key={phase}
-                        className={`px-2 py-1 rounded-md border ${
-                          active
-                            ? 'border-orange-400/50 bg-orange-500/15 text-orange-200'
-                            : done
-                              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                              : 'border-white/5 text-zinc-600'
-                        }`}
-                      >
-                        {label}
-                      </span>
-                    );
-                  })}
-                </div>
-                {activeDial.outcome && (
-                  <p className="text-xs text-zinc-400">
-                    Result:{' '}
-                    <span className="text-white capitalize">{activeDial.outcome.replace(/_/g, ' ')}</span>
-                    {activeDial.hangup_cause_txt ? ` (${activeDial.hangup_cause_txt})` : ''}
-                  </p>
-                )}
-                {activeDial.session_id && (
-                  <Link
-                    to={`/admin/sessions/${activeDial.session_id}`}
-                    className="text-xs text-violet-400 hover:underline inline-block"
-                  >
-                    Open session #{activeDial.session_id} →
-                  </Link>
-                )}
-                {!isTrunk && !activeDial.terminal && (
-                  <p className="text-[10px] text-zinc-600">
-                    Lab mode: answer on Zoiper extension {sipUser1001} when it rings.
-                  </p>
-                )}
-              </div>
-            )}
-
-            {status && !activeDial && <p className="text-sm text-emerald-400/90">{status}</p>}
+            {status && !liveDials.length && <p className="text-sm text-emerald-400/90">{status}</p>}
           </GlassCard>
         </div>
 

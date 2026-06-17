@@ -13,7 +13,12 @@ from backend.auth.deps import get_current_user
 from backend.config import get_settings
 from backend.db.database import get_db
 from backend.db.models import Agent, AgentType, Lead, Session as DBSession
-from backend.services.bridge_client import bridge_status, fetch_dial_status, originate_outbound
+from backend.services.bridge_client import (
+    bridge_status,
+    fetch_dial_status,
+    hangup_outbound,
+    originate_outbound,
+)
 from backend.services.outbound_dialer import dial_one
 from backend.services.outbound_dial_status import enrich_dial_status
 from backend.services.outbound_policy import within_call_window
@@ -62,22 +67,24 @@ async def outbound_status(
     allowed, window_reason = within_call_window()
 
     active_dials: list[dict] = []
+    seen: set[str] = set()
     for row in bridge.get("calls") or []:
         if row.get("direction") == "outbound" and row.get("channel_id"):
-            active_dials.append(
-                enrich_dial_status(
-                    {
-                        "channel_id": row["channel_id"],
-                        "dial_phase": row.get("dial_phase") or "ringing",
-                        "endpoint": row.get("dialed_endpoint"),
-                        "session_id": row.get("platform_session_id"),
-                        "prospect_answered": row.get("prospect_answered"),
-                    }
-                )
-            )
+            cid = row["channel_id"]
+            if cid in seen:
+                continue
+            seen.add(cid)
+            dial_row = await fetch_dial_status(cid)
+            active_dials.append(enrich_dial_status(dial_row))
     for row in bridge.get("pending_dials") or []:
         if row and row.get("channel_id"):
+            cid = row["channel_id"]
+            if cid in seen:
+                continue
+            seen.add(cid)
             active_dials.append(enrich_dial_status(row))
+
+    active_dials = [d for d in active_dials if not d.get("terminal")]
 
     return {
         "outbound_mode": settings.outbound_mode,
@@ -166,13 +173,18 @@ async def get_dial_status(
     if row.get("error") and row.get("dial_phase") == "unknown":
         raise HTTPException(502, row["error"])
 
-    session_id = row.get("session_id")
+    bridge_row = dict(row)
+    row = bridge_row
+    session_id = bridge_row.get("session_id")
     if session_id:
         sess = await db.get(DBSession, session_id)
-        if sess and sess.meta and sess.meta.get("dial_status"):
-            db_row = sess.meta["dial_status"]
-            row = {**db_row, **{k: v for k, v in row.items() if v is not None}}
-            row["session_status"] = sess.status.value if hasattr(sess.status, "value") else str(sess.status)
+        if sess:
+            row["session_status"] = (
+                sess.status.value if hasattr(sess.status, "value") else str(sess.status)
+            )
+            if sess.meta and sess.meta.get("dial_status"):
+                db_row = sess.meta["dial_status"]
+                row = {**db_row, **{k: v for k, v in bridge_row.items() if v is not None}}
 
     if not row.get("session_id"):
         recent = await db.execute(
@@ -185,10 +197,33 @@ async def get_dial_status(
                     sess.status.value if hasattr(sess.status, "value") else str(sess.status)
                 )
                 if sess.meta and sess.meta.get("dial_status"):
-                    row = {**sess.meta["dial_status"], **row}
+                    row = {**sess.meta["dial_status"], **bridge_row, **row}
                 break
 
     return enrich_dial_status(row)
+
+
+@router.post("/hangup/{channel_id}")
+async def hangup_outbound_dial(
+    channel_id: str,
+    _=Depends(get_current_user),
+):
+    """End an active outbound dial from the CRM."""
+    try:
+        await hangup_outbound(channel_id)
+    except RuntimeError as exc:
+        msg = str(exc)
+        if "not found" in msg.lower():
+            raise HTTPException(404, msg) from exc
+        raise HTTPException(502, msg) from exc
+    return enrich_dial_status(
+        {
+            "channel_id": channel_id,
+            "dial_phase": "ended",
+            "outcome": "failed",
+            "terminal": True,
+        }
+    )
 
 
 @router.post("/dial/batch")

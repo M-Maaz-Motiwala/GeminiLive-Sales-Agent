@@ -907,6 +907,8 @@ class GeminiLiveBridge:
                             await self._handle_channel_left_bridge(event)
                         elif etype == "ChannelStateChange":
                             await self._handle_channel_state_change(event)
+                        elif etype == "Dial":
+                            await self._handle_dial(event)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -1031,6 +1033,10 @@ class GeminiLiveBridge:
 
             if direction == "outbound":
                 await self._set_outbound_dial_phase(call, "ringing")
+                asyncio.create_task(
+                    self._outbound_answer_watch(call),
+                    name=f"outbound-answer-watch-{channel_id}",
+                )
 
             inbound_ringback = use_inbound_ringback(direction)
 
@@ -1264,6 +1270,39 @@ class GeminiLiveBridge:
                 return active
         return None
 
+    @staticmethod
+    def _channel_remote_answered(channel: dict) -> bool:
+        """True when the far end has picked up."""
+        return (channel.get("state") or "").strip() == "Up"
+
+    async def _fetch_channel_answered(self, channel_id: str) -> bool:
+        if self.http is None:
+            return False
+        try:
+            resp = await self.http.get(f"/channels/{channel_id}")
+            if resp.status_code == 404:
+                return False
+            resp.raise_for_status()
+            data = resp.json()
+            if self._channel_remote_answered(data):
+                return True
+            for var in ("PJSIP_RESPONSE_CODE", "SIPRESPONSE", "DIALSTATUS"):
+                try:
+                    vresp = await self.http.get(
+                        f"/channels/{channel_id}/variable",
+                        params={"variable": var},
+                    )
+                    if vresp.status_code != 200:
+                        continue
+                    value = (vresp.json().get("value") or "").strip().upper()
+                    if value in ("200", "ANSWER", "ANSWERED"):
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            return False
+        return False
+
     async def _handle_channel_state_change(self, event: dict) -> None:
         channel = event.get("channel") or {}
         channel_id = channel.get("id")
@@ -1282,6 +1321,21 @@ class GeminiLiveBridge:
         elif state == "Up" and call.state.connect_experience != "comfort_tone":
             await self._mark_prospect_answered(call)
 
+    async def _handle_dial(self, event: dict) -> None:
+        dialstatus = (event.get("dialstatus") or "").upper()
+        if dialstatus != "ANSWER":
+            return
+        peer = event.get("peer") or {}
+        channel_id = peer.get("id")
+        if not channel_id:
+            return
+        call = self._find_call_for_channel(channel_id)
+        if call is None or channel_id != call.human_channel_id:
+            return
+        if call.state.call_direction != "outbound":
+            return
+        await self._mark_prospect_answered(call)
+
     async def _mark_prospect_answered(self, call: CallSession) -> None:
         if call.state.prospect_answered:
             return
@@ -1298,11 +1352,23 @@ class GeminiLiveBridge:
         ev = call.state.prospect_answer_event
         if ev is None:
             return False
-        try:
-            await asyncio.wait_for(ev.wait(), timeout=timeout)
-            return True
-        except asyncio.TimeoutError:
-            return False
+        deadline = time.monotonic() + timeout
+        poll_interval = 0.4
+        while time.monotonic() < deadline:
+            if call.state.prospect_answered:
+                return True
+            if await self._fetch_channel_answered(call.human_channel_id):
+                await self._mark_prospect_answered(call)
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                await asyncio.wait_for(ev.wait(), timeout=min(poll_interval, remaining))
+                return True
+            except asyncio.TimeoutError:
+                continue
+        return call.state.prospect_answered
 
     async def _sync_outbound_dial_phase(self, call: CallSession) -> None:
         """ringing → connecting (picked up) → in_call (bridge live)."""
@@ -1315,14 +1381,60 @@ class GeminiLiveBridge:
             and call.state.bridge_id
             and call.state.external_channel_id
         )
-        if not call.state.prospect_answered:
-            phase = "ringing"
-        elif not bridge_ready:
+        if bridge_ready:
+            phase = "in_call"
+        elif call.state.prospect_answered:
             phase = "connecting"
         else:
-            phase = "in_call"
+            phase = "ringing"
         if phase != call.state.dial_phase:
             await self._set_outbound_dial_phase(call, phase)
+
+    async def _outbound_answer_watch(self, call: CallSession) -> None:
+        """Background poll until pickup is detected (covers missed ARI events)."""
+        if call.state.call_direction != "outbound":
+            return
+        channel_id = call.human_channel_id
+        deadline = time.monotonic() + OUTBOUND_ANSWER_TIMEOUT_SEC
+        while (
+            call.state.active
+            and not call.state.prospect_answered
+            and not call.state.bridge_ready
+            and time.monotonic() < deadline
+        ):
+            if await self._fetch_channel_answered(channel_id):
+                await self._mark_prospect_answered(call)
+                return
+            await asyncio.sleep(0.4)
+
+    async def hangup_channel(self, channel_id: str) -> dict[str, Any]:
+        """CRM-initiated hangup for an outbound dial."""
+        call = self._find_call_for_channel(channel_id)
+        if call is not None:
+            call.state.hangup_event = "UserHangup"
+            call.state.hangup_cause_txt = "user hangup"
+            await self.cleanup_call(call)
+            return {"status": "ended", "channel_id": channel_id}
+
+        pending = self._pending_outbound.pop(channel_id, None)
+        row = self._dial_status.get(channel_id)
+        if pending or row:
+            if self.http is not None:
+                try:
+                    await self.http.delete(f"/channels/{channel_id}")
+                except Exception:
+                    pass
+            meta = pending or row or {}
+            self._upsert_dial_status(
+                channel_id,
+                dial_phase="ended",
+                outcome="failed",
+                hangup_cause_txt="user hangup",
+                endpoint=meta.get("endpoint"),
+            )
+            return {"status": "ended", "channel_id": channel_id}
+
+        raise HTTPException(status_code=404, detail="Unknown dial channel")
 
     async def _handle_stasis_end(self, event: dict) -> None:
         channel_id = event["channel"]["id"]
@@ -2273,9 +2385,8 @@ class GeminiLiveBridge:
 
         if (
             call.state.call_direction == "outbound"
-            and call.state.connect_experience == "comfort_tone"
             and not call.state.prospect_answered
-            and call.state.rtp_in_frames >= 20
+            and call.state.rtp_in_frames >= 15
         ):
             asyncio.create_task(self._mark_prospect_answered(call))
 
@@ -2513,6 +2624,14 @@ async def internal_status(_: None = Depends(_verify_bridge_token)):
             if bridge.get_dial_status(cid)
         ],
     }
+
+
+@app.post("/internal/hangup/{channel_id}")
+async def internal_hangup(
+    channel_id: str,
+    _: None = Depends(_verify_bridge_token),
+):
+    return await bridge.hangup_channel(channel_id)
 
 
 @app.get("/internal/dial-status/{channel_id}")
