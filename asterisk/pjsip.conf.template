@@ -429,7 +429,9 @@ allow=ulaw
 allow=alaw
 outbound_auth=didww_trunk_auth
 aors=didww_trunk
-from_user=@DIDWW_CALLER_ID@
+; Per-call caller ID comes from CRM (agent org DID) via ARI — do not pin a single from_user here.
+trust_id_outbound=yes
+send_pai=yes
 from_domain=@DIDWW_FROM_DOMAIN@
 direct_media=no
 force_rport=yes

@@ -6,6 +6,9 @@ export type OutboundAgent = {
   slug: string;
   voice?: string;
   inbound_extension?: string | null;
+  organization_id?: number | null;
+  organization_name?: string | null;
+  did?: string | null;
 };
 
 export async function fetchOutboundAgents(token: string | null): Promise<OutboundAgent[]> {

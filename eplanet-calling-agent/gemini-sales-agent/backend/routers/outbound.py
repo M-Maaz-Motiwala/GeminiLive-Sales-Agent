@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.auth.deps import get_current_user
 from backend.config import get_settings
 from backend.db.database import get_db
-from backend.db.models import Agent, AgentType, Lead, Session as DBSession
+from backend.db.models import Agent, AgentType, Lead, Organization, Session as DBSession
 from backend.services.bridge_client import (
     bridge_status,
     fetch_dial_status,
@@ -110,6 +110,13 @@ async def list_outbound_agents(
         .order_by(Agent.name)
     )
     agents = result.scalars().all()
+    org_ids = {a.organization_id for a in agents if a.organization_id}
+    org_names: dict[int, str] = {}
+    if org_ids:
+        org_result = await db.execute(
+            select(Organization).where(Organization.id.in_(org_ids))
+        )
+        org_names = {o.id: o.name for o in org_result.scalars()}
     return [
         {
             "id": a.id,
@@ -117,6 +124,9 @@ async def list_outbound_agents(
             "slug": a.slug,
             "voice": a.voice,
             "inbound_extension": a.inbound_extension,
+            "organization_id": a.organization_id,
+            "organization_name": org_names.get(a.organization_id or -1),
+            "did": a.did,
         }
         for a in agents
     ]

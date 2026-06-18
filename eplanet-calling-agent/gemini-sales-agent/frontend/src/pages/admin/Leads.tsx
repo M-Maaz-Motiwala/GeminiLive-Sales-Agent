@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { PageHeader, GlassCard, BtnGhost } from '@/src/components/admin/theme';
 import { API_BASE, apiFetchList } from '@/src/lib/api';
 import { dialOutbound, fetchOutboundAgents } from '@/src/lib/outbound';
+import OrgFilter from '@/src/components/admin/OrgFilter';
 
 const STATUSES = ['new', 'qualified', 'contacted', 'closed', 'lost'];
 
@@ -15,16 +16,19 @@ export default function Leads() {
   const { token } = useAuth();
   const [leads, setLeads] = useState<any[]>([]);
   const [statusFilter, setStatusFilter] = useState('');
+  const [organizationId, setOrganizationId] = useState('');
   const [search, setSearch] = useState('');
+  const [outboundAgents, setOutboundAgents] = useState<any[]>([]);
   const [outboundAgentId, setOutboundAgentId] = useState<number | null>(null);
   const [dialingId, setDialingId] = useState<number | null>(null);
   const [dialMsg, setDialMsg] = useState('');
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-  const load = (status = statusFilter, q = search) => {
+  const load = (status = statusFilter, q = search, org = organizationId) => {
     const params = new URLSearchParams();
     if (status) params.set('status', status);
     if (q.trim()) params.set('search', q.trim());
+    if (org) params.set('organization_id', org);
     const qs = params.toString() ? `?${params}` : '';
     apiFetchList(`/api/leads${qs}`, token).then(setLeads);
   };
@@ -33,11 +37,20 @@ export default function Leads() {
     load();
     if (token) {
       fetchOutboundAgents(token).then(agents => {
-        const riley = agents.find(a => a.slug === 'cold-outbound') ?? agents[0];
-        setOutboundAgentId(riley?.id ?? null);
+        setOutboundAgents(agents);
+        const pool = organizationId
+          ? agents.filter(a => String(a.organization_id) === organizationId)
+          : agents;
+        setOutboundAgentId(pool[0]?.id ?? agents[0]?.id ?? null);
       });
     }
-  }, [token, statusFilter]);
+  }, [token, statusFilter, organizationId]);
+
+  useEffect(() => {
+    if (!organizationId) return;
+    const pool = outboundAgents.filter(a => String(a.organization_id) === organizationId);
+    setOutboundAgentId(pool[0]?.id ?? null);
+  }, [organizationId, outboundAgents]);
 
   const callLead = async (lead: any) => {
     if (!outboundAgentId) {
@@ -86,6 +99,7 @@ export default function Leads() {
       )}
 
       <div className="flex flex-col sm:flex-row gap-3 mb-6">
+        <OrgFilter value={organizationId} onChange={setOrganizationId} className="sm:w-56" />
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
           <input
@@ -123,6 +137,7 @@ export default function Leads() {
                   <div className="text-sm font-medium text-white">{l.name || '(no name)'}</div>
                   <div className="text-xs text-zinc-500 mt-0.5">
                     {[l.email, l.phone, l.company].filter(Boolean).join(' · ') || 'No contact details'}
+                    {l.organization_name && <> · <span className="text-violet-400/80">{l.organization_name}</span></>}
                   </div>
                   {l.notes && (
                     <p className="text-xs text-zinc-400 mt-2 line-clamp-2 leading-relaxed">{l.notes}</p>

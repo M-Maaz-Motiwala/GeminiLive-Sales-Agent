@@ -177,6 +177,9 @@ export default function CampaignDetail() {
   const p = campaign.progress;
   const canEdit = campaign.status !== 'running';
   const leads = campaign.campaign_leads ?? [];
+  const fleetAgents = (campaign.agent_ids?.length ? campaign.agent_ids : [campaign.agent_id])
+    .map(id => agents.find(a => a.id === id))
+    .filter(Boolean);
 
   return (
     <div className="p-6 lg:p-8 max-w-5xl">
@@ -218,14 +221,16 @@ export default function CampaignDetail() {
         }
       />
 
-      <div className="flex items-center gap-2 mb-6">
+      <div className="flex items-center gap-2 mb-6 flex-wrap">
         <Megaphone className="w-4 h-4 text-orange-400" />
         <Badge variant={statusBadgeVariant(campaign.status)}>{campaign.status}</Badge>
+        {campaign.organization_name && (
+          <Badge variant="default">{campaign.organization_name}</Badge>
+        )}
         <span className="text-xs text-zinc-600">
-          Agent #{campaign.agent_id}
-          {agents.find(a => a.id === campaign.agent_id)?.name && (
-            <> · {agents.find(a => a.id === campaign.agent_id)?.name}</>
-          )}
+          {fleetAgents.length
+            ? fleetAgents.map(a => a!.name).join(' · ')
+            : `Agent #${campaign.agent_id}`}
         </span>
       </div>
 

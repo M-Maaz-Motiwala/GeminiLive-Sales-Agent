@@ -7,6 +7,7 @@ from typing import Optional
 from backend.auth.deps import get_current_user
 from backend.db.database import get_db
 from backend.db.models import Note
+from backend.services.org_scope import note_org_clause
 
 router = APIRouter(prefix="/api/notes", tags=["notes"])
 
@@ -21,6 +22,7 @@ class NoteIn(BaseModel):
 async def list_notes(
     entity_type: Optional[str] = None,
     entity_id: Optional[int] = None,
+    organization_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_user),
 ):
@@ -29,6 +31,8 @@ async def list_notes(
         q = q.where(Note.entity_type == entity_type)
     if entity_id:
         q = q.where(Note.entity_id == entity_id)
+    if organization_id:
+        q = q.where(await note_org_clause(db, organization_id))
     result = await db.execute(q)
     return [{"id": n.id, "entity_type": n.entity_type, "entity_id": n.entity_id, "content": n.content, "created_at": n.created_at} for n in result.scalars().all()]
 

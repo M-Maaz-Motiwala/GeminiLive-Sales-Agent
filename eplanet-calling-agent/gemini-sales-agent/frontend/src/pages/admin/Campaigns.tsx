@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/src/auth/AuthContext';
 import { Megaphone, PhoneOutgoing, Plus, Upload, ChevronRight } from 'lucide-react';
 import { PageHeader, GlassCard, BtnPrimary, BtnGhost, Badge } from '@/src/components/admin/theme';
+import { apiFetchList } from '@/src/lib/api';
 import { fetchOutboundAgents } from '@/src/lib/outbound';
 import {
   createCampaign,
@@ -15,10 +16,20 @@ import {
 const selectCls =
   'w-full rounded-xl border border-white/10 bg-black/40 px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-violet-500/50';
 
+function defaultAgentIdsForOrg(
+  agents: { id: number; organization_id?: number | null }[],
+  organizationId: string,
+) {
+  const filtered = agents.filter(a => String(a.organization_id) === organizationId);
+  return filtered.slice(0, Math.min(3, filtered.length)).map(a => a.id);
+}
+
 export default function Campaigns() {
   const { token } = useAuth();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [organizations, setOrganizations] = useState<any[]>([]);
   const [agents, setAgents] = useState<any[]>([]);
+  const [organizationId, setOrganizationId] = useState('');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [agentIds, setAgentIds] = useState<number[]>([]);
@@ -30,22 +41,47 @@ export default function Campaigns() {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
+  const filteredAgents = useMemo(
+    () =>
+      organizationId
+        ? agents.filter(a => String(a.organization_id) === organizationId)
+        : [],
+    [agents, organizationId],
+  );
+
+  const selectedOrg = organizations.find(o => String(o.id) === organizationId);
+
   const load = () => fetchCampaigns(token).then(setCampaigns);
 
   useEffect(() => {
     if (!token) return;
     load();
-    fetchOutboundAgents(token).then(a => {
-      setAgents(a);
-      if (a.length && agentIds.length === 0) {
-        setAgentIds(a.slice(0, Math.min(3, a.length)).map((x: { id: number }) => x.id));
+    Promise.all([
+      apiFetchList('/api/organizations', token),
+      fetchOutboundAgents(token),
+    ]).then(([orgs, ags]) => {
+      setOrganizations(orgs);
+      setAgents(ags);
+      if (orgs[0]?.id) {
+        const oid = String(orgs[0].id);
+        setOrganizationId(oid);
+        setAgentIds(defaultAgentIdsForOrg(ags, oid));
       }
     });
   }, [token]);
 
+  const onOrganizationChange = (nextOrgId: string) => {
+    setOrganizationId(nextOrgId);
+    setAgentIds(defaultAgentIdsForOrg(agents, nextOrgId));
+  };
+
   const create = async () => {
     setErr('');
     setMsg('');
+    if (!organizationId) {
+      setErr('Select an organization');
+      return;
+    }
     if (!agentIds.length || !name.trim()) {
       setErr('Name and at least one agent are required');
       return;
@@ -87,13 +123,19 @@ export default function Campaigns() {
     <div className="p-6 lg:p-8 max-w-5xl">
       <PageHeader
         title="Campaigns"
-        subtitle="Fleet outbound — multiple sales agents, adjustable delay between calls, callback routing on 700"
+        subtitle="Outbound campaigns per organization — agents share the org DID for caller ID"
         action={
           <Link to="/admin/outbound">
             <BtnGhost><PhoneOutgoing className="w-4 h-4" /> Quick dial</BtnGhost>
           </Link>
         }
       />
+
+      {organizations.length === 0 && (
+        <p className="text-sm text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-2 mb-4">
+          No organizations yet. <Link to="/admin/organizations" className="underline">Create an organization</Link> first.
+        </p>
+      )}
 
       <GlassCard className="p-6 mb-8 space-y-4">
         <h2 className="text-sm font-semibold text-white flex items-center gap-2">
@@ -106,33 +148,66 @@ export default function Campaigns() {
           value={description}
           onChange={e => setDescription(e.target.value)}
         />
+
         <div>
           <label className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5 block">
-            Sales agents (fleet)
+            Organization
           </label>
-          <div className="flex flex-wrap gap-2">
-            {agents.map(a => {
-              const on = agentIds.includes(a.id);
-              return (
-                <button
-                  key={a.id}
-                  type="button"
-                  onClick={() =>
-                    setAgentIds(prev =>
-                      on ? prev.filter(id => id !== a.id) : [...prev, a.id],
-                    )
-                  }
-                  className={`px-3 py-1.5 rounded-lg text-xs border transition-colors ${
-                    on
-                      ? 'border-violet-500/60 bg-violet-500/20 text-violet-200'
-                      : 'border-white/10 bg-black/30 text-zinc-400 hover:border-white/20'
-                  }`}
-                >
-                  {a.name}
-                </button>
-              );
-            })}
-          </div>
+          <select
+            className={selectCls}
+            value={organizationId}
+            onChange={e => onOrganizationChange(e.target.value)}
+          >
+            <option value="">Select organization…</option>
+            {organizations.map(o => (
+              <option key={o.id} value={o.id}>
+                {o.name} — DID {o.did}
+              </option>
+            ))}
+          </select>
+          {selectedOrg && (
+            <p className="text-[10px] text-zinc-600 mt-1">
+              Outbound calls use caller ID {selectedOrg.did}
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5 block">
+            Sales agents
+          </label>
+          {!organizationId ? (
+            <p className="text-xs text-zinc-600">Select an organization to see its agents.</p>
+          ) : filteredAgents.length === 0 ? (
+            <p className="text-xs text-amber-400/90">
+              No active agents for this org.{' '}
+              <Link to="/admin/agents" className="underline">Create an agent</Link> under {selectedOrg?.name}.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {filteredAgents.map(a => {
+                const on = agentIds.includes(a.id);
+                return (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() =>
+                      setAgentIds(prev =>
+                        on ? prev.filter(id => id !== a.id) : [...prev, a.id],
+                      )
+                    }
+                    className={`px-3 py-1.5 rounded-lg text-xs border transition-colors ${
+                      on
+                        ? 'border-violet-500/60 bg-violet-500/20 text-violet-200'
+                        : 'border-white/10 bg-black/30 text-zinc-400 hover:border-white/20'
+                    }`}
+                  >
+                    {a.name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <label className="block space-y-1.5">
@@ -179,7 +254,7 @@ export default function Campaigns() {
           </span>
         </div>
 
-        <BtnPrimary onClick={create} disabled={busy}>
+        <BtnPrimary onClick={create} disabled={busy || !organizationId || !filteredAgents.length}>
           {busy ? 'Creating…' : 'Create campaign'}
         </BtnPrimary>
         {err && <p className="text-sm text-red-400">{err}</p>}
@@ -195,6 +270,9 @@ export default function Campaigns() {
                   <Megaphone className="w-4 h-4 text-orange-400 shrink-0" />
                   <span className="font-medium text-white truncate">{c.name}</span>
                   <Badge variant={statusBadgeVariant(c.status)}>{c.status}</Badge>
+                  {c.organization_name && (
+                    <Badge variant="default">{c.organization_name}</Badge>
+                  )}
                 </div>
                 {c.description && (
                   <p className="text-xs text-zinc-500 mt-1 line-clamp-2">{c.description}</p>

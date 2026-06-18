@@ -8,12 +8,13 @@ from pydantic import BaseModel
 
 from backend.auth.deps import get_current_user
 from backend.db.database import get_db
-from backend.db.models import Session as DBSession, Message, ToolCall, Output, OutputType, Note, SessionStatus
+from backend.db.models import Session as DBSession, Message, ToolCall, Output, OutputType, Note, SessionStatus, Agent
 from backend.services import summarizer
 from backend.services.post_call import process_call_end
 from backend.services.session_reconcile import reconcile_stale_bridge_sessions
 from backend.services.session_display import enrich_session_dict
 from backend.services.session_timeline import build_timeline, merge_message_turns
+from backend.services.org_scope import resolve_session_org, session_org_clause
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -31,6 +32,7 @@ def _session_out(s: DBSession) -> dict:
 async def list_sessions(
     status: Optional[str] = None,
     agent_id: Optional[int] = None,
+    organization_id: Optional[int] = None,
     limit: int = Query(50, le=200),
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_user),
@@ -45,6 +47,8 @@ async def list_sessions(
         q = q.where(DBSession.status == status)
     if agent_id:
         q = q.where(DBSession.agent_id == agent_id)
+    if organization_id:
+        q = q.where(session_org_clause(organization_id))
     await reconcile_stale_bridge_sessions(db)
     result = await db.execute(q)
     rows = []
@@ -57,6 +61,9 @@ async def list_sessions(
                 "slug": s.agent.slug,
                 "inbound_extension": s.agent.inbound_extension,
             }
+        org_id, org_name = await resolve_session_org(db, s)
+        out["organization_id"] = org_id
+        out["organization_name"] = org_name
         out["output_types"] = [o.output_type.value for o in (s.outputs or [])]
         enrich_session_dict(s, out)
         rows.append(out)

@@ -4,6 +4,7 @@ import { useAuth } from '@/src/auth/AuthContext';
 import { Phone, Radio, Sparkles, Clock } from 'lucide-react';
 import { PageHeader, GlassCard, Badge } from '@/src/components/admin/theme';
 import { apiFetchList } from '@/src/lib/api';
+import OrgFilter, { appendOrgParam } from '@/src/components/admin/OrgFilter';
 
 function statusVariant(s: string): 'live' | 'success' | 'warn' | 'default' {
   if (s === 'active') return 'live';
@@ -15,13 +16,15 @@ function statusVariant(s: string): 'live' | 'success' | 'warn' | 'default' {
 export default function Sessions() {
   const { token } = useAuth();
   const [sessions, setSessions] = useState<any[]>([]);
+  const [organizationId, setOrganizationId] = useState('');
 
   useEffect(() => {
-    const load = () => apiFetchList('/api/sessions', token).then(setSessions);
+    const load = () =>
+      apiFetchList(appendOrgParam('/api/sessions', organizationId), token).then(setSessions);
     load();
     const t = setInterval(load, 10000);
     return () => clearInterval(t);
-  }, [token]);
+  }, [token, organizationId]);
 
   return (
     <div className="p-6 lg:p-8">
@@ -29,9 +32,12 @@ export default function Sessions() {
         title="Sessions"
         subtitle="Call history and live conversations — refreshes every 10s"
         action={
-          <div className="flex items-center gap-2 text-xs text-zinc-500">
-            <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-            Monitoring
+          <div className="flex items-center gap-3">
+            <OrgFilter value={organizationId} onChange={setOrganizationId} />
+            <div className="flex items-center gap-2 text-xs text-zinc-500">
+              <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+              Monitoring
+            </div>
           </div>
         }
       />
@@ -53,6 +59,9 @@ export default function Sessions() {
                         <span className="text-sm font-semibold text-white">Session #{s.id}</span>
                         {agentName && (
                           <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-zinc-400">{agentName}</span>
+                        )}
+                        {s.organization_name && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-300">{s.organization_name}</span>
                         )}
                         {(s.meta?.direction === 'outbound' || s.channel_type === 'outbound') && (
                           <span className="text-[10px] px-2 py-0.5 rounded-full bg-orange-500/15 text-orange-300">OUTBOUND</span>

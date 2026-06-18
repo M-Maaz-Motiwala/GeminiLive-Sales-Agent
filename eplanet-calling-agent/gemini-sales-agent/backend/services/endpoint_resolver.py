@@ -3,8 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from backend.config import get_settings
-from backend.db.models import Lead
+from backend.services.phone_normalize import normalize_did
 from backend.services.phone_utils import (
     lab_pjsip_endpoint,
     normalize_e164,
@@ -95,6 +94,14 @@ def resolve_endpoint(
     raise ValueError("No dial endpoint — set phone, endpoint, or OUTBOUND_LAB_ENDPOINT")
 
 
+def format_trunk_caller_id(did: str) -> str:
+    """E.164 presentation for PSTN trunk outbound."""
+    digits = normalize_did(did)
+    if not digits:
+        return did.strip()
+    return f"+{digits}"
+
+
 def resolve_caller_id(
     override: Optional[str] = None,
     *,
@@ -102,12 +109,11 @@ def resolve_caller_id(
 ) -> str:
     mode = (settings.outbound_mode or "lab").strip().lower()
     if override and override.strip():
-        return override.strip()
+        return format_trunk_caller_id(override) if mode == "trunk" else override.strip()
     if agent_did and agent_did.strip():
-        did = agent_did.strip()
         if mode == "trunk":
-            return did if did.startswith("+") else f"+{did.lstrip('+')}"
-        return did
+            return format_trunk_caller_id(agent_did)
+        return agent_did.strip()
     if mode == "trunk" and settings.outbound_trunk_caller_id.strip():
-        return settings.outbound_trunk_caller_id.strip()
+        return format_trunk_caller_id(settings.outbound_trunk_caller_id)
     return settings.outbound_default_caller_id or "1000"

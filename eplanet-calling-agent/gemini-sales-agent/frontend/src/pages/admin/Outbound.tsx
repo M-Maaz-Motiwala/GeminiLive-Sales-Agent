@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/src/auth/AuthContext';
 import { PhoneOutgoing, Radio, AlertCircle, Wifi, RefreshCw, PhoneOff } from 'lucide-react';
 import { API_BASE, apiFetchList, apiFetchPublic } from '@/src/lib/api';
+import { appendOrgParam } from '@/src/components/admin/OrgFilter';
 import {
   clearStoredActiveDials,
   DEFAULT_LAB_ENDPOINT,
@@ -134,6 +135,8 @@ export default function Outbound() {
   const { token } = useAuth();
   const [searchParams] = useSearchParams();
   const [agents, setAgents] = useState<OutboundAgent[]>([]);
+  const [organizations, setOrganizations] = useState<any[]>([]);
+  const [organizationId, setOrganizationId] = useState('');
   const [leads, setLeads] = useState<any[]>([]);
   const [sessions, setSessions] = useState<any[]>([]);
   const [info, setInfo] = useState<any>(null);
@@ -153,6 +156,41 @@ export default function Outbound() {
 
   const liveDials = activeDials.filter(d => !d.terminal);
 
+  const filteredAgents = useMemo(
+    () =>
+      organizationId
+        ? agents.filter(a => String(a.organization_id) === organizationId)
+        : [],
+    [agents, organizationId],
+  );
+
+  const selectedOrg = organizations.find(o => String(o.id) === organizationId);
+
+  const filteredLeads = useMemo(
+    () =>
+      organizationId
+        ? leads.filter(l => !l.organization_id || String(l.organization_id) === organizationId)
+        : leads,
+    [leads, organizationId],
+  );
+
+  const onOrganizationChange = (nextOrgId: string) => {
+    setOrganizationId(nextOrgId);
+    const pool = agents.filter(a => String(a.organization_id) === nextOrgId);
+    const paramAgent = searchParams.get('agent_id');
+    const preferred = paramAgent
+      ? pool.find(a => String(a.id) === paramAgent)?.id
+      : pool[0]?.id;
+    setAgentId(preferred ?? '');
+    setLeadId(prev => {
+      if (prev === '') return '';
+      const ok = leads.some(
+        l => l.id === prev && (!l.organization_id || String(l.organization_id) === nextOrgId),
+      );
+      return ok ? prev : '';
+    });
+  };
+
   const syncDials = useCallback((updater: DialTrackerState[] | ((prev: DialTrackerState[]) => DialTrackerState[])) => {
     setActiveDials(prev => {
       const next = typeof updater === 'function' ? updater(prev) : updater;
@@ -165,10 +203,11 @@ export default function Outbound() {
     if (!token) return;
     setLoading(true);
     try {
-      const [agentList, leadList, sessionList, sysInfo, obStatus] = await Promise.all([
+      const [agentList, orgList, leadList, sessionList, sysInfo, obStatus] = await Promise.all([
         fetchOutboundAgents(token),
-        apiFetchList('/api/leads', token),
-        apiFetchList('/api/sessions?limit=20', token),
+        apiFetchList('/api/organizations', token),
+        apiFetchList(appendOrgParam('/api/leads', organizationId), token),
+        apiFetchList(appendOrgParam('/api/sessions?limit=20', organizationId), token),
         apiFetchPublic('/api/system/info'),
         fetchOutboundStatus(token).catch(() => ({})),
       ]);
@@ -178,6 +217,7 @@ export default function Outbound() {
         syncDials(prev => mergeDials(prev, fromBridge));
       }
       setAgents(agentList);
+      setOrganizations(orgList);
       setLeads(leadList);
       setSessions(
         sessionList.filter(
@@ -187,11 +227,25 @@ export default function Outbound() {
       setInfo(sysInfo);
       const paramAgent = searchParams.get('agent_id');
       const paramLead = searchParams.get('lead_id');
-      if (agentList.length) {
+      if (orgList.length && !organizationId) {
+        const fromAgent = paramAgent
+          ? agentList.find(a => String(a.id) === paramAgent)?.organization_id
+          : agentList[0]?.organization_id;
+        const oid = fromAgent ? String(fromAgent) : String(orgList[0].id);
+        setOrganizationId(oid);
+        const pool = agentList.filter(a => String(a.organization_id) === oid);
         const preferred = paramAgent
-          ? agentList.find(a => String(a.id) === paramAgent)?.id
-          : agentList.find(a => a.slug === 'sales-riley')?.id ?? agentList[0]?.id;
-        setAgentId(prev => (prev === '' ? preferred ?? agentList[0].id : prev));
+          ? pool.find(a => String(a.id) === paramAgent)?.id
+          : pool[0]?.id;
+        setAgentId(preferred ?? '');
+      } else if (organizationId && agentList.length) {
+        const pool = agentList.filter(a => String(a.organization_id) === organizationId);
+        if (!pool.some(a => a.id === agentId)) {
+          const preferred = paramAgent
+            ? pool.find(a => String(a.id) === paramAgent)?.id
+            : pool[0]?.id;
+          setAgentId(preferred ?? '');
+        }
       }
       if (paramLead) setLeadId(Number(paramLead));
       if (!endpointInitialized.current) {
@@ -208,7 +262,12 @@ export default function Outbound() {
     load();
     const poll = setInterval(load, 5000);
     return () => clearInterval(poll);
-  }, [token, searchParams]);
+  }, [token, searchParams, organizationId]);
+
+  useEffect(() => {
+    if (!token || !organizationId) return;
+    apiFetchList(appendOrgParam('/api/leads', organizationId), token).then(setLeads);
+  }, [token, organizationId]);
 
   useEffect(() => {
     if (!token) return;
@@ -449,27 +508,57 @@ export default function Outbound() {
               <div className="space-y-3">
                 <p className="text-sm text-amber-400/90 flex items-start gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                  No outbound agent found. Run <code className="text-xs">make bootstrap</code> to seed Riley, or create an agent with type{' '}
-                  <code className="text-xs">outbound_sales</code> under AI Agents.
+                  No outbound agents found. Create a sales agent under an organization first.
                 </p>
                 <Link to="/admin/agents" className="text-xs text-violet-400 hover:underline">
                   Go to AI Agents →
                 </Link>
               </div>
+            ) : organizations.length === 0 ? (
+              <p className="text-sm text-amber-400/90">
+                No organizations yet.{' '}
+                <Link to="/admin/organizations" className="text-violet-400 hover:underline">Create one</Link> first.
+              </p>
             ) : (
               <>
+                <label className="block space-y-1.5">
+                  <span className="text-xs text-zinc-500 uppercase tracking-wide">Organization</span>
+                  <select
+                    className={selectCls}
+                    value={organizationId}
+                    onChange={e => onOrganizationChange(e.target.value)}
+                  >
+                    <option value="">Select organization…</option>
+                    {organizations.map(o => (
+                      <option key={o.id} value={o.id}>
+                        {o.name} — DID {o.did}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedOrg && (
+                    <p className="text-[10px] text-zinc-600">Outbound caller ID: {selectedOrg.did}</p>
+                  )}
+                </label>
+
                 <label className="block space-y-1.5">
                   <span className="text-xs text-zinc-500 uppercase tracking-wide">Outbound agent</span>
                   <select
                     className={selectCls}
                     value={agentId}
                     onChange={e => setAgentId(e.target.value ? Number(e.target.value) : '')}
+                    disabled={!organizationId || filteredAgents.length === 0}
                   >
-                    {agents.map(a => (
-                      <option key={a.id} value={a.id}>
-                        {a.name} ({a.slug})
-                      </option>
-                    ))}
+                    {!organizationId ? (
+                      <option value="">Select organization first</option>
+                    ) : filteredAgents.length === 0 ? (
+                      <option value="">No agents for this org</option>
+                    ) : (
+                      filteredAgents.map(a => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                        </option>
+                      ))
+                    )}
                   </select>
                 </label>
 
@@ -481,7 +570,7 @@ export default function Outbound() {
                     onChange={e => setLeadId(e.target.value ? Number(e.target.value) : '')}
                   >
                     <option value="">— No lead —</option>
-                    {leads.map(l => (
+                    {filteredLeads.map(l => (
                       <option key={l.id} value={l.id}>
                         {l.name || '(no name)'} — {l.phone || l.email || `lead #${l.id}`}
                       </option>
@@ -584,12 +673,15 @@ export default function Outbound() {
           </GlassCard>
 
           <GlassCard className="p-5 text-xs text-zinc-500 space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Manage Riley like inbound agents</h3>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Per-organization outbound</h3>
             <p>
-              <Link to="/admin/agents" className="text-violet-400 hover:underline">AI Agents</Link> — edit prompt, voice, tools
+              <Link to="/admin/organizations" className="text-violet-400 hover:underline">Organizations</Link> — register DIDs
             </p>
             <p>
-              <Link to="/admin/documents" className="text-violet-400 hover:underline">Knowledge base</Link> — upload Trangotech docs for Riley
+              <Link to="/admin/agents" className="text-violet-400 hover:underline">AI Agents</Link> — prompts, voice, tools per org
+            </p>
+            <p>
+              <Link to="/admin/documents" className="text-violet-400 hover:underline">Knowledge base</Link> — org-scoped KB
             </p>
             <p className="text-[10px] text-zinc-600 pt-2 border-t border-white/5 font-mono">
               POST {API_BASE}/api/outbound/dial

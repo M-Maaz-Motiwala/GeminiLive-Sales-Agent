@@ -21,6 +21,7 @@ from backend.db.models import (
     CampaignLeadStatus,
     CampaignStatus,
     Lead,
+    Organization,
 )
 from backend.services.campaign_csv import parse_campaign_csv
 from backend.services.campaign_leads import add_csv_rows, add_endpoints, add_lead_ids
@@ -135,7 +136,23 @@ async def _validate_agents(db: AsyncSession, agent_ids: list[int]) -> list[Agent
         if agent.type not in (AgentType.sales, AgentType.outbound_sales):
             raise HTTPException(400, f"Agent {agent.name} must be a sales agent")
         agents.append(agent)
+    org_ids = {a.organization_id for a in agents}
+    if len(org_ids) != 1 or next(iter(org_ids), None) is None:
+        raise HTTPException(
+            400,
+            "All agents in a campaign must belong to the same organization",
+        )
     return agents
+
+
+async def _enrich_campaign_org(db: AsyncSession, data: dict[str, Any]) -> dict[str, Any]:
+    agent = await db.get(Agent, data.get("agent_id"))
+    if agent and agent.organization_id:
+        org = await db.get(Organization, agent.organization_id)
+        if org:
+            data["organization_id"] = org.id
+            data["organization_name"] = org.name
+    return data
 
 
 def _campaign_meta_agents(
@@ -157,7 +174,7 @@ async def list_campaigns(
     out = []
     for c in campaigns:
         await db.refresh(c, ["campaign_leads"])
-        out.append(_campaign_out(c))
+        out.append(await _enrich_campaign_org(db, _campaign_out(c)))
     return out
 
 
@@ -186,7 +203,7 @@ async def create_campaign(
         await add_endpoints(db, campaign, body.endpoints)
 
     await db.refresh(campaign, ["campaign_leads"])
-    return _campaign_out(campaign)
+    return await _enrich_campaign_org(db, _campaign_out(campaign))
 
 
 @router.get("/{campaign_id}")
@@ -206,7 +223,7 @@ async def get_campaign(
         _lead_row(cl, leads_map.get(cl.lead_id) if cl.lead_id else None)
         for cl in sorted(c.campaign_leads, key=lambda x: x.id)
     ]
-    data = _campaign_out(c)
+    data = await _enrich_campaign_org(db, _campaign_out(c))
     data["campaign_leads"] = rows
     return data
 
@@ -244,7 +261,7 @@ async def update_campaign(
         )
 
     await db.flush()
-    return _campaign_out(c)
+    return await _enrich_campaign_org(db, _campaign_out(c))
 
 
 @router.delete("/{campaign_id}")

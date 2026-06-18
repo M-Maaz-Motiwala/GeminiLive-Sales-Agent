@@ -7,6 +7,7 @@ from typing import Optional
 from backend.auth.deps import get_current_user
 from backend.db.database import get_db
 from backend.db.models import Lead, LeadStatus
+from backend.services.org_scope import org_names_map
 
 router = APIRouter(prefix="/api/leads", tags=["leads"])
 
@@ -22,10 +23,12 @@ class LeadIn(BaseModel):
     lead_profile: Optional[dict] = None
 
 
-def _out(l: Lead) -> dict:
+def _out(l: Lead, org_name: Optional[str] = None) -> dict:
     return {"id": l.id, "name": l.name, "email": l.email, "phone": l.phone,
             "company": l.company, "status": l.status, "notes": l.notes,
             "tags": l.tags, "source_session_id": l.source_session_id,
+            "organization_id": l.organization_id,
+            "organization_name": org_name,
             "lead_profile": l.lead_profile or {},
             "created_at": l.created_at, "updated_at": l.updated_at}
 
@@ -34,6 +37,7 @@ def _out(l: Lead) -> dict:
 async def list_leads(
     status: Optional[str] = None,
     search: Optional[str] = None,
+    organization_id: Optional[int] = None,
     limit: int = Query(100, le=500),
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_user),
@@ -41,10 +45,15 @@ async def list_leads(
     q = select(Lead).order_by(Lead.created_at.desc()).limit(limit)
     if status:
         q = q.where(Lead.status == status)
+    if organization_id:
+        q = q.where(Lead.organization_id == organization_id)
     if search:
         q = q.where(or_(Lead.name.ilike(f"%{search}%"), Lead.email.ilike(f"%{search}%"), Lead.company.ilike(f"%{search}%")))
     result = await db.execute(q)
-    return [_out(l) for l in result.scalars().all()]
+    leads = result.scalars().all()
+    org_ids = {l.organization_id for l in leads if l.organization_id}
+    names = await org_names_map(db, org_ids)
+    return [_out(l, names.get(l.organization_id or -1)) for l in leads]
 
 
 @router.post("")

@@ -22,6 +22,8 @@ export type Campaign = {
   name: string;
   agent_id: number;
   agent_ids?: number[];
+  organization_id?: number | null;
+  organization_name?: string | null;
   inter_call_delay_sec?: number;
   status: string;
   description?: string | null;

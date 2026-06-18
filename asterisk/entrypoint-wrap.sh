@@ -14,9 +14,7 @@ done
 DIDWW_USER="${DIDWW_SIP_USER:-86vbvm130t}"
 DIDWW_PASS="${DIDWW_SIP_SECRET:-}"
 DIDWW_FROM_DOMAIN="${DIDWW_FROM_DOMAIN:-out.didww.com}"
-DIDWW_CALLER_ID="${DIDWW_CALLER_ID:-${OUTBOUND_TRUNK_CALLER_ID:-12107297915}}"
-
-if [ -n "${EXTERNAL_IP}" ]; then
+DIDWW_FROM_DOMAIN="${DIDWW_FROM_DOMAIN:-out.didww.com}"
   PJSIP_NAT="external_media_address=${EXTERNAL_IP}
 external_signaling_address=${EXTERNAL_IP}"
   RTP_NAT="externaddr=${EXTERNAL_IP}"
@@ -47,7 +45,6 @@ sed -i "${SED_PASS}" /etc/asterisk/pjsip.conf
 sed -i \
   -e "s|@DIDWW_USER@|${DIDWW_USER}|g" \
   -e "s|@DIDWW_PASS@|${DIDWW_PASS}|g" \
-  -e "s|@DIDWW_CALLER_ID@|${DIDWW_CALLER_ID}|g" \
   -e "s|@DIDWW_FROM_DOMAIN@|${DIDWW_FROM_DOMAIN}|g" \
   /etc/asterisk/pjsip.conf
 

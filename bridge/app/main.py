@@ -1769,6 +1769,10 @@ class GeminiLiveBridge:
         assert self.http is not None
 
         cid = (caller_id or os.getenv("OUTBOUND_DEFAULT_CALLER_ID", "1000")).strip()
+        if not cid.startswith("+") and cid.isdigit() and len(cid) >= 10:
+            cid = f"+{cid.lstrip('+')}"
+        from_domain = os.getenv("DIDWW_FROM_DOMAIN", "out.didww.com").strip()
+        pai_user = cid.lstrip("+")
         app_args = [agent_slug, "outbound"]
         if lead_id is not None:
             app_args.append(str(lead_id))
@@ -1778,6 +1782,11 @@ class GeminiLiveBridge:
             "app": self.ari_app,
             "appArgs": ",".join(app_args),
             "callerId": f'"Aura" <{cid}>',
+            "variables": {
+                "CALLERID(all)": f'"Aura" <{cid}>',
+                "CALLERID(num)": cid.lstrip("+"),
+                "PJSIP_HEADER(add,P-Asserted-Identity)": f"<sip:{pai_user}@{from_domain}>",
+            },
         }
         resp = await self.http.post("/channels", json=payload)
         if resp.status_code >= 400:

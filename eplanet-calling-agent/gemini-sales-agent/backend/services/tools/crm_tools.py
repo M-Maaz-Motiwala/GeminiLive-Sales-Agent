@@ -6,7 +6,7 @@ from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
-from backend.db.models import Lead, Contact, Note, LeadStatus
+from backend.db.models import Lead, Contact, Note, LeadStatus, Session as DBSession, Agent
 from backend.services.phone_utils import normalize_e164
 
 logger = logging.getLogger(__name__)
@@ -65,6 +65,26 @@ def _extract_profile(params: dict, existing: dict | None = None) -> dict:
     return profile
 
 
+async def _org_id_for_session(db: AsyncSession, session_id: int | None) -> int | None:
+    if not session_id:
+        return None
+    sess = await db.get(DBSession, session_id)
+    if not sess:
+        return None
+    meta = sess.meta or {}
+    oid = meta.get("organization_id")
+    if oid is not None:
+        try:
+            return int(oid)
+        except (TypeError, ValueError):
+            pass
+    if sess.agent_id:
+        agent = await db.get(Agent, sess.agent_id)
+        if agent and agent.organization_id:
+            return agent.organization_id
+    return None
+
+
 async def upsert_contact_from_lead(db: AsyncSession, lead: Lead) -> Contact | None:
     """Mirror captured leads into the contacts directory for the CRM UI."""
     name = (lead.name or "").strip()
@@ -93,6 +113,8 @@ async def upsert_contact_from_lead(db: AsyncSession, lead: Lead) -> Contact | No
             existing.company = lead.company
         if lead.notes:
             existing.notes = lead.notes
+        if lead.organization_id:
+            existing.organization_id = lead.organization_id
         await db.flush()
         return existing
     contact = Contact(
@@ -102,6 +124,7 @@ async def upsert_contact_from_lead(db: AsyncSession, lead: Lead) -> Contact | No
         company=lead.company,
         notes=lead.notes,
         tags=lead.tags or [],
+        organization_id=lead.organization_id,
     )
     db.add(contact)
     await db.flush()
@@ -110,6 +133,7 @@ async def upsert_contact_from_lead(db: AsyncSession, lead: Lead) -> Contact | No
 
 async def create_lead(db: AsyncSession, params: dict) -> dict:
     session_id = params.get("source_session_id")
+    organization_id = await _org_id_for_session(db, session_id)
     lead_profile = _extract_profile(params)
     phone = params.get("phone")
     phone_e164 = None
@@ -126,6 +150,7 @@ async def create_lead(db: AsyncSession, params: dict) -> dict:
         status=LeadStatus.new,
         tags=params.get("tags", []),
         source_session_id=session_id,
+        organization_id=organization_id,
     )
     db.add(lead)
     await db.flush()

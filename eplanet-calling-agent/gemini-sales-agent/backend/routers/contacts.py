@@ -7,6 +7,7 @@ from typing import Optional
 from backend.auth.deps import get_current_user
 from backend.db.database import get_db
 from backend.db.models import Contact
+from backend.services.org_scope import org_names_map
 
 router = APIRouter(prefix="/api/contacts", tags=["contacts"])
 
@@ -20,20 +21,25 @@ class ContactIn(BaseModel):
     tags: list = []
 
 
-def _out(c: Contact) -> dict:
+def _out(c: Contact, org_name: Optional[str] = None) -> dict:
     return {"id": c.id, "name": c.name, "email": c.email, "phone": c.phone,
             "company": c.company, "notes": c.notes, "tags": c.tags,
+            "organization_id": c.organization_id,
+            "organization_name": org_name,
             "created_at": c.created_at, "updated_at": c.updated_at}
 
 
 @router.get("")
 async def list_contacts(
     search: Optional[str] = None,
+    organization_id: Optional[int] = None,
     limit: int = Query(100, le=500),
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_user),
 ):
     q = select(Contact).order_by(Contact.created_at.desc()).limit(limit)
+    if organization_id:
+        q = q.where(Contact.organization_id == organization_id)
     if search:
         q = q.where(or_(
             Contact.name.ilike(f"%{search}%"),
@@ -42,7 +48,10 @@ async def list_contacts(
             Contact.company.ilike(f"%{search}%"),
         ))
     result = await db.execute(q)
-    return [_out(c) for c in result.scalars().all()]
+    contacts = result.scalars().all()
+    org_ids = {c.organization_id for c in contacts if c.organization_id}
+    names = await org_names_map(db, org_ids)
+    return [_out(c, names.get(c.organization_id or -1)) for c in contacts]
 
 
 @router.post("")
