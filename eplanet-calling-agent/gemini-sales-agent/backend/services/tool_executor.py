@@ -169,8 +169,9 @@ TOOL_DECLARATIONS = [
         "name": "end_call",
         "description": (
             "End the phone call after you have fully spoken your goodbye. "
-            "Call this only once your farewell sentence is complete — the system "
-            "waits for your voice to finish playing before hanging up."
+            "Do NOT use this immediately after suggesting a discovery call — only after "
+            "scheduling details are confirmed OR the prospect declines / says goodbye. "
+            "The system waits for your voice to finish playing before hanging up."
         ),
         "parameters": {
             "type": "object",

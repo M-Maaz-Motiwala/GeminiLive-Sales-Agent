@@ -224,8 +224,8 @@ _SILENCE_10MS_16K = b"\x00" * APM_FRAME_BYTES_16K
 # from the websockets library is 40s; we want to react faster than that.
 SEND_LOOP_HUNG_SEC = float(os.getenv("SEND_LOOP_HUNG_SEC", "3.0"))
 # end_call: wait for farewell audio to finish before hanging up.
-END_CALL_MIN_WAIT_SEC = float(os.getenv("END_CALL_MIN_WAIT_SEC", "0.8"))
-END_CALL_PLAYBACK_GRACE_SEC = float(os.getenv("END_CALL_PLAYBACK_GRACE_SEC", "1.5"))
+END_CALL_MIN_WAIT_SEC = float(os.getenv("END_CALL_MIN_WAIT_SEC", "0.5"))
+END_CALL_PLAYBACK_GRACE_SEC = float(os.getenv("END_CALL_PLAYBACK_GRACE_SEC", "1.0"))
 END_CALL_MAX_WAIT_SEC = float(os.getenv("END_CALL_MAX_WAIT_SEC", "15.0"))
 
 # Auto-greeting: when the call is fully bridged, kick the model to

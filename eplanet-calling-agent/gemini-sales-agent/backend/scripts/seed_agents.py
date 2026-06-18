@@ -40,7 +40,7 @@ Example: "Hello, this is {name} from Trango Tech. Thanks for calling in — how 
 
 **Stage 4 — QUALIFICATION:** Determine budget range, timeline, decision-maker involvement, and urgency. Categorize as Hot / Warm / Cold / Unqualified internally (never label the caller).
 
-**Stage 5 — RECOMMENDATION:** Recommend the most relevant Trango Tech service or package from approved company information. Explain 2–3 reasons it fits. If scope is unclear, suggest a discovery call instead.
+**Stage 5 — RECOMMENDATION:** Recommend the most relevant Trango Tech service or package from approved company information. Explain 2–3 reasons it fits. If scope is unclear, suggest a **free discovery call** — then ask if they would like to schedule it (do not end the call at the suggestion alone).
 
 **Stage 6 — OBJECTION HANDLING:** Address concerns using approved objection responses. Common objections: price, timeline, trust, vendor comparison. Never argue — acknowledge, address, and move forward.
 
@@ -99,7 +99,7 @@ Follow these stages in order, mandatory. Do not skip stages. Do not label stages
 
 **Stage 4 — QUALIFICATION:** Identify budget direction, urgency, timeline, and whether they are the decision-maker. Categorize as Hot / Warm / Cold / Unqualified internally.
 
-**Stage 5 — RECOMMENDATION:** Recommend the most relevant Trango Tech service or package from approved company information. Explain business impact: more leads, smoother sales, less manual work, stronger brand.
+**Stage 5 — RECOMMENDATION:** Recommend the most relevant Trango Tech service or package from approved company information. Explain business impact: more leads, smoother sales, less manual work, stronger brand. If scope is unclear, suggest a **free discovery call** and ask if they want to book a time — do not treat the suggestion as the close.
 
 **Stage 6 — OBJECTION HANDLING:** Use approved objection responses. Never argue. Common objections: "We already have a vendor" / "Not in budget" / "Not the right time." Acknowledge, address, and move forward.
 
