@@ -228,15 +228,12 @@ def agent_to_live_config(
     lead_context: str = "",
     prior_call_context: str = "",
     call_context: str = "",
-    transfer_context: str = "",
     direction: str = "inbound",
 ) -> dict[str, Any]:
     """Return config dict consumed by the SIP bridge."""
     role_prompt = _role_prompt(agent, direction)
     system_prompt = role_prompt
-    if transfer_context:
-        system_prompt += "\n\n" + transfer_context
-    elif prior_call_context:
+    if prior_call_context:
         system_prompt += "\n\n" + prior_call_context
     if call_context:
         system_prompt += "\n\n" + call_context

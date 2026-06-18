@@ -312,29 +312,6 @@ TOOL_DECLARATIONS = [
             "required": ["query"],
         },
     },
-    {
-        "name": "transfer_to_support",
-        "description": (
-            "Transfer the live call to an available Trango Tech FAQ/support specialist. "
-            "Use when the caller asks about a past project issue, complaint, billing dispute, "
-            "or technical support — after you confirm they want to be transferred. "
-            "Say a brief hold line out loud before calling this tool."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "handoff_summary": {
-                    "type": "string",
-                    "description": "Brief summary of the caller's issue for the support agent.",
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Why transferring (e.g. past_project_issue, billing, technical).",
-                },
-            },
-            "required": ["handoff_summary"],
-        },
-    },
 ]
 
 
@@ -396,13 +373,6 @@ async def dispatch(
 
         elif tool_name == "search_knowledge_base":
             result = await rag_tools.search_knowledge_base(params, agent_id=agent_id)
-
-        elif tool_name == "transfer_to_support":
-            result = {
-                "status": "transfer",
-                "handoff_summary": params.get("handoff_summary") or "",
-                "reason": params.get("reason") or "support_request",
-            }
 
         else:
             result = {"error": f"Unknown tool: {tool_name}"}

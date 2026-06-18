@@ -34,7 +34,6 @@ _TYPES_WITH_EXTENSION = frozenset(
     {
         AgentType.sales,
         AgentType.outbound_sales,
-        AgentType.support,
         AgentType.lead_qualification,
     }
 )

@@ -21,6 +21,7 @@ _PATCHES = (
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ",
     "ALTER TABLE agents ADD COLUMN IF NOT EXISTS did VARCHAR(32)",
     "ALTER TYPE agenttype ADD VALUE IF NOT EXISTS 'support'",
+    "CREATE INDEX IF NOT EXISTS ix_agents_did ON agents (did)",
 )
 
 

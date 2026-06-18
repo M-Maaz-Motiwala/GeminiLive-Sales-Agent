@@ -25,12 +25,12 @@ from backend.db.models import (
 )
 from backend.services.session_contact import build_call_contact_meta
 from backend.services import tool_executor
-from backend.services.callback_router import resolve_inbound_agent, resolve_support_agent
+from backend.services.callback_router import resolve_inbound_agent
 from backend.services.callback_context import (
     format_prior_call_context,
     load_inbound_callback_context,
 )
-from backend.services.transfer_context import format_transfer_handoff, load_recent_transcript
+from backend.services.phone_normalize import normalize_did
 from backend.services.live_config import (
     agent_to_live_config,
     format_lead_context,
@@ -58,6 +58,7 @@ class CallStartIn(BaseModel):
     caller_id: Optional[str] = None
     agent_slug: Optional[str] = None
     dialed_extension: Optional[str] = None
+    dialed_did: Optional[str] = None
     direction: Literal["inbound", "outbound"] = "inbound"
     lead_id: Optional[int] = None
     dialed_endpoint: Optional[str] = None
@@ -97,13 +98,6 @@ class CallEndIn(BaseModel):
     token_usage: dict[str, Any] = Field(default_factory=dict)
 
 
-class CallTransferIn(BaseModel):
-    session_id: int
-    channel_id: str
-    handoff_summary: str = ""
-    reason: Optional[str] = None
-
-
 async def _resolve_agent(db: AsyncSession, body: CallStartIn) -> Agent:
     """Outbound: explicit slug. Inbound: callback-aware fleet routing."""
     direction = body.direction or "inbound"
@@ -126,9 +120,10 @@ async def _resolve_agent(db: AsyncSession, body: CallStartIn) -> Agent:
                 caller_id=body.caller_id,
                 agent_slug=body.agent_slug,
                 dialed_extension=body.dialed_extension,
+                dialed_did=body.dialed_did,
             )
-        except RuntimeError:
-            raise HTTPException(status_code=503, detail="No active agent configured")
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
 
     result = await db.execute(
         select(Agent).where(Agent.is_active.is_(True)).order_by(Agent.id).limit(1)
@@ -150,6 +145,10 @@ async def call_start(
     meta: dict[str, Any] = {"channel_id": body.channel_id, "direction": direction}
     if body.dialed_extension:
         meta["dialed_extension"] = body.dialed_extension
+    if body.dialed_did:
+        meta["dialed_did"] = normalize_did(body.dialed_did)
+    if agent.did:
+        meta["org_did"] = normalize_did(agent.did)
     if body.agent_slug:
         meta["agent_slug"] = body.agent_slug
     if body.dialed_endpoint:
@@ -259,11 +258,12 @@ async def call_start(
             cl.session_id = db_session.id
 
     logger.info(
-        "Call started session=%d agent=%s direction=%s ext=%s channel=%s caller=%s lead=%s campaign_lead=%s contact=%s",
+        "Call started session=%d agent=%s direction=%s ext=%s did=%s channel=%s caller=%s lead=%s campaign_lead=%s contact=%s",
         db_session.id,
         agent.slug,
         direction,
         body.dialed_extension,
+        body.dialed_did,
         body.channel_id,
         body.caller_id,
         body.lead_id,
@@ -306,98 +306,6 @@ async def call_tool(
         "name": fr.name,
         "response": fr.response,
     }
-
-
-@router.post("/calls/transfer")
-async def call_transfer(
-    body: CallTransferIn,
-    db: AsyncSession = Depends(get_db),
-    _: None = Depends(_verify_bridge_token),
-) -> dict[str, Any]:
-    """Hand off a live call from sales to an available support agent (new Gemini session)."""
-    sales_session = await db.get(DBSession, body.session_id)
-    if sales_session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if sales_session.status != SessionStatus.active:
-        raise HTTPException(status_code=409, detail="Session is not active")
-
-    sales_agent = await db.get(Agent, sales_session.agent_id) if sales_session.agent_id else None
-    if sales_agent is None:
-        raise HTTPException(status_code=400, detail="No agent on session")
-
-    try:
-        support_agent = await resolve_support_agent(db, exclude_agent_id=sales_agent.id)
-    except RuntimeError:
-        raise HTTPException(status_code=503, detail="No support agent available")
-
-    transcript = await load_recent_transcript(db, sales_session.id)
-    handoff_block = format_transfer_handoff(
-        from_agent_name=sales_agent.name,
-        handoff_summary=body.handoff_summary,
-        transcript=transcript,
-        caller_id=sales_session.caller_id,
-    )
-
-    sales_meta = dict(sales_session.meta or {})
-    sales_meta["transfer_out"] = {
-        "reason": body.reason,
-        "handoff_summary": body.handoff_summary,
-        "to_agent_id": support_agent.id,
-        "to_agent_slug": support_agent.slug,
-        "channel_id": body.channel_id,
-    }
-    sales_session.meta = sales_meta
-    sales_session.status = SessionStatus.ended
-    sales_session.ended_at = datetime.now(timezone.utc)
-
-    faq_meta: dict[str, Any] = {
-        "channel_id": body.channel_id,
-        "direction": "inbound",
-        "transferred_from_session_id": sales_session.id,
-        "transferred_from_agent_id": sales_agent.id,
-        "transfer_reason": body.reason,
-        "transfer_handoff_summary": body.handoff_summary,
-    }
-    if sales_session.caller_id:
-        faq_meta["contact_number"] = sales_session.caller_id
-
-    faq_session = DBSession(
-        agent_id=support_agent.id,
-        caller_id=sales_session.caller_id,
-        channel_type=ChannelType.sip,
-        status=SessionStatus.active,
-        meta=faq_meta,
-    )
-    db.add(faq_session)
-    await db.flush()
-
-    kb_block, kb_meta = await preload_agent_context(support_agent, direction="inbound")
-    faq_meta["preloaded_kb"] = kb_meta
-
-    config = agent_to_live_config(
-        support_agent,
-        kb_context=kb_block,
-        transfer_context=handoff_block,
-        direction="inbound",
-    )
-    config["session_id"] = faq_session.id
-
-    context_tokens = estimate_text_tokens(config.get("system_instruction", ""))
-    faq_meta["token_usage_baseline"] = {
-        "text_input_context_tokens": context_tokens,
-        "note": "Support transfer session — system prompt at handoff",
-    }
-    faq_session.meta = faq_meta
-    await db.flush()
-
-    logger.info(
-        "Call transfer sales_session=%d -> support_session=%d agent=%s channel=%s",
-        sales_session.id,
-        faq_session.id,
-        support_agent.slug,
-        body.channel_id,
-    )
-    return config
 
 
 @router.post("/calls/dial-status")
