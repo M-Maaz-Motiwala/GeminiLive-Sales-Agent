@@ -228,18 +228,15 @@ def agent_to_live_config(
     lead_context: str = "",
     prior_call_context: str = "",
     call_context: str = "",
+    transfer_context: str = "",
     direction: str = "inbound",
-    global_master_prompt: str | None = None,
 ) -> dict[str, Any]:
     """Return config dict consumed by the SIP bridge."""
     role_prompt = _role_prompt(agent, direction)
-    # Per-agent override wins, then global platform setting, then built-in default.
-    agent_override = getattr(agent, "master_prompt_override", None) or None
-    master = _get_master_prompt(agent_override or global_master_prompt)
-    system_prompt = master + role_prompt
-    if direction == "outbound":
-        system_prompt += "\n\n" + OUTBOUND_OPENING_RULES
-    if prior_call_context:
+    system_prompt = role_prompt
+    if transfer_context:
+        system_prompt += "\n\n" + transfer_context
+    elif prior_call_context:
         system_prompt += "\n\n" + prior_call_context
     if call_context:
         system_prompt += "\n\n" + call_context

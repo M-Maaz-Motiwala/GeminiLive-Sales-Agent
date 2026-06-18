@@ -1,4 +1,4 @@
-"""Route inbound callbacks to the best sales agent (owner of prior outbound touch or idle fleet member)."""
+"""Route inbound callbacks to sales agents; resolve available support agents for transfers."""
 from __future__ import annotations
 
 import logging
@@ -13,6 +13,7 @@ from backend.services.callback_context import find_prior_outbound_session
 logger = logging.getLogger(__name__)
 
 _SALES_TYPES = (AgentType.sales, AgentType.outbound_sales)
+_SUPPORT_TYPES = (AgentType.support, AgentType.document_qa)
 
 
 async def busy_agent_ids(db: AsyncSession) -> set[int]:
@@ -43,6 +44,37 @@ async def find_callback_owner(
     return None
 
 
+async def resolve_support_agent(
+    db: AsyncSession,
+    *,
+    exclude_agent_id: Optional[int] = None,
+) -> Agent:
+    """Pick an available FAQ/support agent for a live transfer."""
+    busy = await busy_agent_ids(db)
+    if exclude_agent_id is not None:
+        busy.add(exclude_agent_id)
+
+    result = await db.execute(
+        select(Agent)
+        .where(Agent.is_active.is_(True), Agent.type.in_(_SUPPORT_TYPES))
+        .order_by(Agent.id)
+    )
+    candidates = [a for a in result.scalars() if a.id not in busy]
+    if candidates:
+        return candidates[0]
+
+    result = await db.execute(
+        select(Agent)
+        .where(Agent.is_active.is_(True), Agent.type.in_(_SUPPORT_TYPES))
+        .order_by(Agent.id)
+        .limit(1)
+    )
+    agent = result.scalar_one_or_none()
+    if agent is None:
+        raise RuntimeError("No active support agent configured")
+    return agent
+
+
 async def resolve_inbound_agent(
     db: AsyncSession,
     *,
@@ -50,7 +82,7 @@ async def resolve_inbound_agent(
     agent_slug: Optional[str] = None,
     dialed_extension: Optional[str] = None,
 ) -> Agent:
-    """Pick sales agent for an inbound call (callback-aware, skips busy agents)."""
+    """Pick agent for an inbound call (sales callback router or direct extension)."""
     if agent_slug:
         result = await db.execute(
             select(Agent).where(Agent.slug == agent_slug, Agent.is_active.is_(True))
@@ -71,6 +103,7 @@ async def resolve_inbound_agent(
         if agent:
             return agent
 
+    # Shared DID / ext 700 — sales callback fleet only (never auto-pick support).
     busy = await busy_agent_ids(db)
     owner = await find_callback_owner(db, caller_id)
     if owner and owner.id not in busy:
@@ -90,9 +123,12 @@ async def resolve_inbound_agent(
         return owner
 
     result = await db.execute(
-        select(Agent).where(Agent.is_active.is_(True)).order_by(Agent.id).limit(1)
+        select(Agent)
+        .where(Agent.is_active.is_(True), Agent.type.in_(_SALES_TYPES))
+        .order_by(Agent.id)
+        .limit(1)
     )
     agent = result.scalar_one_or_none()
     if agent is None:
-        raise RuntimeError("No active agent configured")
+        raise RuntimeError("No active sales agent configured")
     return agent

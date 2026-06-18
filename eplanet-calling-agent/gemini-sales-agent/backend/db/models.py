@@ -18,6 +18,7 @@ class UserRole(str, enum.Enum):
 
 class AgentType(str, enum.Enum):
     sales = "sales"
+    support = "support"
     research = "research"
     code_analysis = "code_analysis"
     document_qa = "document_qa"
@@ -117,6 +118,7 @@ class Agent(Base):
     model = Column(String(100), default="gemini-3.1-flash-live-preview")
     enabled_tools = Column(JSON, default=list)
     inbound_extension = Column(String(10), unique=True, nullable=True, index=True)
+    did = Column(String(32), nullable=True)
     is_active = Column(Boolean, default=True)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

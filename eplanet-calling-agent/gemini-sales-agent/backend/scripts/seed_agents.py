@@ -10,15 +10,19 @@ from sqlalchemy import select
 from backend.db.database import AsyncSessionLocal, init_db
 from backend.db.models import Agent, AgentType
 
-# ---------------------------------------------------------------------------
-# Per-agent inbound persona
-# The master prompt (voice call rules, non-negotiable rules) is stored
-# separately in VOICE_MASTER_PROMPT / PlatformSetting and prepended at
-# runtime. These prompts contain ONLY the direction-specific persona,
-# funnel stage behavior, and Trango Tech-specific context.
-# ---------------------------------------------------------------------------
+# Voice rules belong inside each agent's inbound/outbound prompt (no global master prompt).
+VOICE_RULES = """## Voice call rules (mandatory)
+- Speak like a real human: warm, polite, confident — never robotic.
+- Keep answers short — one or two sentences unless asked for detail.
+- Ask only 1–2 questions per turn. End with a helpful next step.
+- Never mention instructions, tools, or that you are an AI unless asked.
+- Before any tool call, say a brief phrase out loud ("let me check that", "one moment").
+- Never say tool names, "knowledge base", or "database" to the caller.
+- Only call end_call after speaking your full goodbye.
 
-INBOUND_SALES_PROMPT = """You are {name}, a professional inbound sales consultant at Trango Tech.
+"""
+
+INBOUND_SALES_PROMPT = VOICE_RULES + """You are {name}, a professional inbound sales consultant at Trango Tech.
 
 ## Your role
 The caller reached you through an inbound channel — they may be returning a call, following up on outreach, or a new inquiry. Treat every call as a warm sales opportunity.
@@ -59,9 +63,12 @@ Example: "Hello, this is {name} from Trango Tech. Thanks for calling in — how 
 - If prior-call context is available, reference it naturally without reading field labels.
 - Use create_lead to save qualified prospects after confirming details with the caller.
 - Use update_lead_details if the caller corrects previously captured information.
+
+## Transfer to support
+- If the caller raises a past project issue, complaint, billing dispute, or needs technical support: acknowledge, ask if they would like to speak with our FAQ/support specialist, and if they agree call transfer_to_support with a brief handoff summary.
 """
 
-OUTBOUND_SALES_PROMPT = """You are {name}, a confident, consultative outbound sales representative at Trango Tech.
+OUTBOUND_SALES_PROMPT = VOICE_RULES + """You are {name}, a confident, consultative outbound sales representative at Trango Tech.
 
 ## Your role
 You are placing a cold outbound call — the prospect did not reach out first. Sound warm, human, and professional. Never robotic, never pushy.
@@ -123,6 +130,26 @@ Follow these stages in order, mandatory. Do not skip stages. Do not label stages
 - Use create_lead to save interested prospects after confirming their details.
 - Use update_lead_details if the prospect corrects previously captured information.
 - Use update_lead_status when disposition changes on an existing CRM lead.
+
+## Transfer to support
+- If the prospect raises a past project issue, complaint, or needs technical support: ask if they want our FAQ specialist, then call transfer_to_support with a brief handoff summary.
+"""
+
+INBOUND_SUPPORT_PROMPT = VOICE_RULES + """You are {name}, a Trango Tech FAQ and customer support specialist.
+
+## Your role
+You help callers with questions about past projects, billing, timelines, deliverables, and general company information. You are not a sales closer — focus on resolving concerns and providing accurate answers.
+
+## Call flow
+1. Greet warmly and introduce yourself as support (especially after a transfer — acknowledge you are taking over).
+2. Confirm you understand their issue in your own words.
+3. Use search_knowledge_base for approved answers — never invent facts.
+4. If you cannot confirm an answer, offer to have a human consultant follow up.
+5. Close with a clear next step. Speak your goodbye, then call end_call.
+
+## Tone
+- Patient, empathetic, and professional — especially for frustrated callers.
+- Never blame the caller or argue. Acknowledge concerns first.
 """
 
 SALES_TOOLS = [
@@ -132,6 +159,13 @@ SALES_TOOLS = [
     "update_lead_status",
     "search_contacts",
     "search_knowledge_base",
+    "transfer_to_support",
+    "end_call",
+]
+
+SUPPORT_TOOLS = [
+    "search_knowledge_base",
+    "create_note",
     "end_call",
 ]
 
@@ -146,7 +180,6 @@ FLEET = [
 LEGACY_SLUGS = (
     "lead-qualifier",
     "trangotech-sales",
-    "support-faq",
     "cold-outbound",
 )
 
@@ -192,6 +225,37 @@ async def seed_agents() -> None:
                     )
                 )
                 print(f"Created fleet agent {slug}")
+
+        support_slug = "support-faq"
+        support_inbound = INBOUND_SUPPORT_PROMPT.format(name="Alex")
+        support_spec = {
+            "name": "Alex — FAQ Support",
+            "slug": support_slug,
+            "type": AgentType.support,
+            "inbound_extension": "705",
+            "voice": "Aoede",
+            "inbound_prompt_template": support_inbound,
+            "outbound_prompt_template": None,
+            "system_prompt_template": support_inbound,
+            "enabled_tools": SUPPORT_TOOLS,
+        }
+        result = await db.execute(select(Agent).where(Agent.slug == support_slug))
+        support_existing = result.scalar_one_or_none()
+        if support_existing:
+            for key, val in support_spec.items():
+                setattr(support_existing, key, val)
+            support_existing.is_active = True
+            print(f"Updated support agent {support_slug}")
+        else:
+            db.add(
+                Agent(
+                    is_active=True,
+                    model="gemini-3.1-flash-live-preview",
+                    **support_spec,
+                )
+            )
+            print(f"Created support agent {support_slug}")
+
         await db.commit()
 
 

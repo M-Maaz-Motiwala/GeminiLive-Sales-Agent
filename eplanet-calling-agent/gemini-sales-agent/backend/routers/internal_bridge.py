@@ -25,13 +25,12 @@ from backend.db.models import (
 )
 from backend.services.session_contact import build_call_contact_meta
 from backend.services import tool_executor
-from backend.services.callback_router import resolve_inbound_agent
+from backend.services.callback_router import resolve_inbound_agent, resolve_support_agent
 from backend.services.callback_context import (
     format_prior_call_context,
     load_inbound_callback_context,
 )
-from backend.db.models import PlatformSetting
-from backend.routers.system import SETTING_MASTER_PROMPT
+from backend.services.transfer_context import format_transfer_handoff, load_recent_transcript
 from backend.services.live_config import (
     agent_to_live_config,
     format_lead_context,
@@ -96,6 +95,13 @@ class CallEndIn(BaseModel):
     duration_sec: Optional[float] = None
     stats: dict[str, Any] = Field(default_factory=dict)
     token_usage: dict[str, Any] = Field(default_factory=dict)
+
+
+class CallTransferIn(BaseModel):
+    session_id: int
+    channel_id: str
+    handoff_summary: str = ""
+    reason: Optional[str] = None
 
 
 async def _resolve_agent(db: AsyncSession, body: CallStartIn) -> Agent:
@@ -224,13 +230,6 @@ async def call_start(
     kb_block, kb_meta = await preload_agent_context(agent, direction=direction)
     meta["preloaded_kb"] = kb_meta
 
-    # Load global master prompt from platform settings (if set).
-    global_mp_result = await db.execute(
-        select(PlatformSetting).where(PlatformSetting.key == SETTING_MASTER_PROMPT)
-    )
-    global_mp_row = global_mp_result.scalar_one_or_none()
-    global_master_prompt = global_mp_row.value if global_mp_row else None
-
     config = agent_to_live_config(
         agent,
         kb_context=kb_block,
@@ -238,7 +237,6 @@ async def call_start(
         prior_call_context=prior_call_context,
         call_context=format_outbound_call_context(meta) if direction == "outbound" else "",
         direction=direction,
-        global_master_prompt=global_master_prompt,
     )
     config["session_id"] = db_session.id
 
@@ -308,6 +306,98 @@ async def call_tool(
         "name": fr.name,
         "response": fr.response,
     }
+
+
+@router.post("/calls/transfer")
+async def call_transfer(
+    body: CallTransferIn,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_verify_bridge_token),
+) -> dict[str, Any]:
+    """Hand off a live call from sales to an available support agent (new Gemini session)."""
+    sales_session = await db.get(DBSession, body.session_id)
+    if sales_session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if sales_session.status != SessionStatus.active:
+        raise HTTPException(status_code=409, detail="Session is not active")
+
+    sales_agent = await db.get(Agent, sales_session.agent_id) if sales_session.agent_id else None
+    if sales_agent is None:
+        raise HTTPException(status_code=400, detail="No agent on session")
+
+    try:
+        support_agent = await resolve_support_agent(db, exclude_agent_id=sales_agent.id)
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="No support agent available")
+
+    transcript = await load_recent_transcript(db, sales_session.id)
+    handoff_block = format_transfer_handoff(
+        from_agent_name=sales_agent.name,
+        handoff_summary=body.handoff_summary,
+        transcript=transcript,
+        caller_id=sales_session.caller_id,
+    )
+
+    sales_meta = dict(sales_session.meta or {})
+    sales_meta["transfer_out"] = {
+        "reason": body.reason,
+        "handoff_summary": body.handoff_summary,
+        "to_agent_id": support_agent.id,
+        "to_agent_slug": support_agent.slug,
+        "channel_id": body.channel_id,
+    }
+    sales_session.meta = sales_meta
+    sales_session.status = SessionStatus.ended
+    sales_session.ended_at = datetime.now(timezone.utc)
+
+    faq_meta: dict[str, Any] = {
+        "channel_id": body.channel_id,
+        "direction": "inbound",
+        "transferred_from_session_id": sales_session.id,
+        "transferred_from_agent_id": sales_agent.id,
+        "transfer_reason": body.reason,
+        "transfer_handoff_summary": body.handoff_summary,
+    }
+    if sales_session.caller_id:
+        faq_meta["contact_number"] = sales_session.caller_id
+
+    faq_session = DBSession(
+        agent_id=support_agent.id,
+        caller_id=sales_session.caller_id,
+        channel_type=ChannelType.sip,
+        status=SessionStatus.active,
+        meta=faq_meta,
+    )
+    db.add(faq_session)
+    await db.flush()
+
+    kb_block, kb_meta = await preload_agent_context(support_agent, direction="inbound")
+    faq_meta["preloaded_kb"] = kb_meta
+
+    config = agent_to_live_config(
+        support_agent,
+        kb_context=kb_block,
+        transfer_context=handoff_block,
+        direction="inbound",
+    )
+    config["session_id"] = faq_session.id
+
+    context_tokens = estimate_text_tokens(config.get("system_instruction", ""))
+    faq_meta["token_usage_baseline"] = {
+        "text_input_context_tokens": context_tokens,
+        "note": "Support transfer session — system prompt at handoff",
+    }
+    faq_session.meta = faq_meta
+    await db.flush()
+
+    logger.info(
+        "Call transfer sales_session=%d -> support_session=%d agent=%s channel=%s",
+        sales_session.id,
+        faq_session.id,
+        support_agent.slug,
+        body.channel_id,
+    )
+    return config
 
 
 @router.post("/calls/dial-status")

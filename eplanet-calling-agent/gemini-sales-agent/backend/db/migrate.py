@@ -19,6 +19,8 @@ _PATCHES = (
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS retry_count INTEGER DEFAULT 0",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS last_error TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS did VARCHAR(32)",
+    "ALTER TYPE agenttype ADD VALUE IF NOT EXISTS 'support'",
 )
 
 

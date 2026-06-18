@@ -2231,9 +2231,86 @@ class GeminiLiveBridge:
                 return
             raise
 
+    async def _platform_transfer(
+        self, call: CallSession, handoff_summary: str, reason: Optional[str] = None
+    ) -> Optional[dict]:
+        if not self.platform_url or not call.state.platform_session_id:
+            return None
+        try:
+            assert self.http is not None
+            resp = await self.http.post(
+                f"{self.platform_url}/internal/calls/transfer",
+                json={
+                    "session_id": call.state.platform_session_id,
+                    "channel_id": call.human_channel_id,
+                    "handoff_summary": handoff_summary,
+                    "reason": reason,
+                },
+                headers=self._platform_headers(),
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            logger.exception("Platform call transfer failed")
+            return None
+
+    async def _restart_gemini_session(self, call: CallSession, new_cfg: dict) -> None:
+        """Swap Gemini persona mid-call (e.g. sales → support transfer)."""
+        logger.info(
+            "Restarting Gemini for transfer channel=%s new_session=%s agent=%s",
+            call.human_channel_id,
+            new_cfg.get("session_id"),
+            new_cfg.get("agent_slug"),
+        )
+        call.call_active.clear()
+        if call.gemini_task is not None and not call.gemini_task.done():
+            call.gemini_task.cancel()
+            try:
+                await call.gemini_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        call.gemini_task = None
+        call.session_ready.clear()
+        call.session = None
+
+        call.state.greeting_sent = False
+        call.state.end_call_pending = False
+        call.state.platform_session_id = new_cfg.get("session_id")
+        call.state.agent_config = new_cfg
+        call.state.call_direction = "inbound"
+        instruction = new_cfg.get("system_instruction") or ""
+        if instruction:
+            call.state.token_usage.add_text_context(instruction)
+
+        self._drain_queue(call.rtp_out_queue)
+        call.state.out_pcm8_buffer = b""
+
+        call.call_active.set()
+        call.gemini_task = asyncio.create_task(
+            self._gemini_loop(call), name=f"gemini-loop-transfer-{call.human_channel_id}"
+        )
+
+    async def _execute_transfer(self, call: CallSession, params: dict) -> None:
+        await self._flush_all_transcripts(call)
+        new_cfg = await self._platform_transfer(
+            call,
+            handoff_summary=str(params.get("handoff_summary") or ""),
+            reason=params.get("reason"),
+        )
+        if not new_cfg:
+            logger.error("Transfer aborted — platform did not return new config")
+            return
+        await self._restart_gemini_session(call, new_cfg)
+
     async def _handle_tool_call(self, call: CallSession, session, tool_call) -> None:
+        transfer_params: Optional[dict] = None
+
         async def run_one(fc):
+            nonlocal transfer_params
             params = dict(fc.args) if fc.args else {}
+            if fc.name == "transfer_to_support":
+                transfer_params = params
             result = await self._platform_tool(call, fc.name, fc.id, params)
             return types.FunctionResponse(
                 id=result.get("id", fc.id),
@@ -2252,7 +2329,12 @@ class GeminiLiveBridge:
             call.state.token_usage.add_text_context(payload)
         logger.info("Tool call batch: %s", [r.name for r in responses])
         await session.send_tool_response(function_responses=list(responses))
-        if any(r.name == "end_call" for r in responses):
+        if transfer_params is not None:
+            asyncio.create_task(
+                self._execute_transfer(call, transfer_params),
+                name=f"call-transfer-{call.human_channel_id}",
+            )
+        elif any(r.name == "end_call" for r in responses):
             self._schedule_end_call(call)
 
     def _schedule_end_call(self, call: CallSession) -> None:
