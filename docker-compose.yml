@@ -49,6 +49,8 @@ services:
       - voip
     volumes:
       - uploads_data:/app/uploads
+      - ./asterisk/generated:/app/asterisk/generated
+      - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test:
         - CMD
@@ -74,6 +76,7 @@ services:
       REDIS_URL: redis://redis:6379/0
     volumes:
       - uploads_data:/app/uploads
+      - ./asterisk/generated:/app/asterisk/generated
     depends_on:
       platform:
         condition: service_healthy
@@ -102,6 +105,7 @@ services:
         condition: service_healthy
     volumes:
       - uploads_data:/app/uploads
+      - ./asterisk/generated:/app/asterisk/generated
     restart: unless-stopped
 
   frontend:
@@ -138,6 +142,7 @@ services:
       - ./asterisk/http.conf:/etc/asterisk/http.conf:ro
       - ./asterisk/ari.conf:/etc/asterisk/ari.conf:ro
       - ./asterisk/extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ./asterisk/generated:/etc/asterisk/generated
       - ./asterisk/logger.conf:/etc/asterisk/logger.conf:ro
     ports:
       - "8088:8088"

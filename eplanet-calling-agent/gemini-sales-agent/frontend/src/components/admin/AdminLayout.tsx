@@ -2,13 +2,14 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/src/auth/AuthContext';
 import { cn } from '@/lib/utils';
 import {
-  LayoutDashboard, Bot, PhoneCall, PhoneOutgoing, Megaphone, Users, UserCheck,
+  LayoutDashboard, Bot, Building2, PhoneCall, PhoneOutgoing, Megaphone, Users, UserCheck,
   FileText, Layers, LogOut, StickyNote, Headphones,
   HelpCircle, BookOpen, Settings,
 } from 'lucide-react';
 
 const NAV = [
   { to: '/admin', icon: LayoutDashboard, label: 'Command Center', end: true },
+  { to: '/admin/organizations', icon: Building2, label: 'Organizations' },
   { to: '/admin/agents', icon: Bot, label: 'AI Agents' },
   { to: '/admin/sessions', icon: PhoneCall, label: 'Call Sessions' },
   { to: '/admin/outbound', icon: PhoneOutgoing, label: 'Outbound Calls' },

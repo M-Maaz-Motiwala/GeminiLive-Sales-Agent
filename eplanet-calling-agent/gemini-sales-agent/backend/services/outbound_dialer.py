@@ -35,7 +35,7 @@ async def dial_one(
     await assert_may_dial(db, phone=phone)
 
     ep, ep_meta = resolve_endpoint(lead=lead, explicit_endpoint=endpoint)
-    cid = resolve_caller_id(caller_id)
+    cid = resolve_caller_id(caller_id, agent_did=agent.did)
 
     status = await bridge_status()
     active = int(status.get("active_calls") or 0)

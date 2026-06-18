@@ -14,7 +14,22 @@ async def search_knowledge_base(params: dict, agent_id: Optional[int] = None) ->
     if not query:
         return {"error": "query is required"}
 
-    results, latency_ms = await rag_service.query_with_timing(query, agent_id, top_k=top_k)
+    organization_id = params.get("organization_id")
+    if organization_id is None and agent_id:
+        from backend.db.database import AsyncSessionLocal
+        from backend.db.models import Agent
+
+        async with AsyncSessionLocal() as db:
+            agent = await db.get(Agent, agent_id)
+            if agent:
+                organization_id = agent.organization_id
+
+    results, latency_ms = await rag_service.query_with_timing(
+        query,
+        agent_id,
+        top_k=top_k,
+        organization_id=organization_id,
+    )
     metrics = compute_query_metrics(
         query, results, latency_ms=latency_ms, top_k=top_k, source="tool"
     )

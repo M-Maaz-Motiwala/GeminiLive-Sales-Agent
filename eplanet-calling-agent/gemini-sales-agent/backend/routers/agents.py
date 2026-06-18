@@ -1,19 +1,18 @@
 import re
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import Optional
 
 from backend.auth.deps import get_current_user
 from backend.db.database import get_db
-from backend.db.models import Agent, Persona, AgentType, User, Document
+from backend.db.models import Agent, Persona, AgentType, User, Document, Organization
 from backend.services.agent_provisioning import (
     agent_type_needs_extension,
     allocate_inbound_extension,
 )
-from backend.services.phone_normalize import normalize_did
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -28,8 +27,8 @@ class PersonaIn(BaseModel):
 
 class AgentIn(BaseModel):
     name: str
+    organization_id: int
     type: AgentType = AgentType.sales
-    did: str
     inbound_prompt_template: Optional[str] = None
     outbound_prompt_template: Optional[str] = None
     voice: str = "Zephyr"
@@ -37,21 +36,15 @@ class AgentIn(BaseModel):
     enabled_tools: list = []
     is_active: bool = True
 
-    @field_validator("did")
-    @classmethod
-    def validate_did(cls, v: str) -> str:
-        normalized = normalize_did(v)
-        if not normalized:
-            raise ValueError("DID must be a valid phone number (10+ digits)")
-        return normalized
 
-
-def _agent_out(a: Agent, doc_count: int = 0) -> dict:
+def _agent_out(a: Agent, doc_count: int = 0, org_name: Optional[str] = None) -> dict:
     return {
         "id": a.id,
         "name": a.name,
         "slug": a.slug,
         "type": a.type,
+        "organization_id": a.organization_id,
+        "organization_name": org_name,
         "did": a.did,
         "inbound_prompt_template": a.inbound_prompt_template,
         "outbound_prompt_template": a.outbound_prompt_template,
@@ -72,6 +65,13 @@ async def _doc_counts(db: AsyncSession) -> dict[int, int]:
         .group_by(Document.agent_id)
     )
     return {row[0]: row[1] for row in result.all()}
+
+
+async def _load_org(db: AsyncSession, organization_id: int) -> Organization:
+    org = await db.get(Organization, organization_id)
+    if not org or not org.is_active:
+        raise HTTPException(400, "Organization not found or inactive")
+    return org
 
 
 def _resolve_system_prompt(body: AgentIn) -> str:
@@ -98,27 +98,26 @@ async def list_agents(db: AsyncSession = Depends(get_db), _=Depends(get_current_
     result = await db.execute(select(Agent).order_by(Agent.created_at.desc()))
     agents = result.scalars().all()
     counts = await _doc_counts(db)
-    return [_agent_out(a, counts.get(a.id, 0)) for a in agents]
-
-
-@router.get("/dids")
-async def list_dids(db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
-    """Distinct organization DIDs and how many active agents use each."""
-    result = await db.execute(
-        select(Agent.did, func.count(Agent.id))
-        .where(Agent.is_active.is_(True), Agent.did.isnot(None))
-        .group_by(Agent.did)
-        .order_by(Agent.did)
-    )
+    org_ids = {a.organization_id for a in agents if a.organization_id}
+    org_names: dict[int, str] = {}
+    if org_ids:
+        org_result = await db.execute(
+            select(Organization).where(Organization.id.in_(org_ids))
+        )
+        org_names = {o.id: o.name for o in org_result.scalars()}
     return [
-        {"did": row[0], "agent_count": row[1]}
-        for row in result.all()
-        if row[0]
+        _agent_out(a, counts.get(a.id, 0), org_names.get(a.organization_id or -1))
+        for a in agents
     ]
 
 
 @router.post("")
-async def create_agent(body: AgentIn, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def create_agent(
+    body: AgentIn,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    org = await _load_org(db, body.organization_id)
     slug_base = re.sub(r"[^a-z0-9-]", "-", body.name.lower().strip()).strip("-") or "agent"
     taken = {row[0] for row in (await db.execute(select(Agent.slug))).all()}
     slug = _unique_slug(slug_base, taken)
@@ -131,7 +130,8 @@ async def create_agent(body: AgentIn, db: AsyncSession = Depends(get_db), user: 
         name=body.name,
         slug=slug,
         type=body.type,
-        did=body.did,
+        organization_id=org.id,
+        did=org.did,
         system_prompt_template=_resolve_system_prompt(body),
         inbound_prompt_template=body.inbound_prompt_template,
         outbound_prompt_template=body.outbound_prompt_template,
@@ -144,7 +144,7 @@ async def create_agent(body: AgentIn, db: AsyncSession = Depends(get_db), user: 
     )
     db.add(agent)
     await db.flush()
-    return _agent_out(agent, 0)
+    return _agent_out(agent, 0, org.name)
 
 
 @router.get("/{agent_id}")
@@ -154,7 +154,11 @@ async def get_agent(agent_id: int, db: AsyncSession = Depends(get_db), _=Depends
     if not a:
         raise HTTPException(404, "Agent not found")
     counts = await _doc_counts(db)
-    return _agent_out(a, counts.get(a.id, 0))
+    org_name = None
+    if a.organization_id:
+        org = await db.get(Organization, a.organization_id)
+        org_name = org.name if org else None
+    return _agent_out(a, counts.get(a.id, 0), org_name)
 
 
 @router.get("/{agent_id}/stats")
@@ -171,21 +175,29 @@ async def agent_stats(agent_id: int, db: AsyncSession = Depends(get_db), _=Depen
         "agent_id": agent_id,
         "document_count": doc_count,
         "inbound_extension": a.inbound_extension,
+        "organization_id": a.organization_id,
         "did": a.did,
         "has_knowledge_tool": "search_knowledge_base" in (a.enabled_tools or []),
     }
 
 
 @router.put("/{agent_id}")
-async def update_agent(agent_id: int, body: AgentIn, db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
+async def update_agent(
+    agent_id: int,
+    body: AgentIn,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
     result = await db.execute(select(Agent).where(Agent.id == agent_id))
     a = result.scalar_one_or_none()
     if not a:
         raise HTTPException(404, "Agent not found")
 
+    org = await _load_org(db, body.organization_id)
     a.name = body.name
     a.type = body.type
-    a.did = body.did
+    a.organization_id = org.id
+    a.did = org.did
     a.inbound_prompt_template = body.inbound_prompt_template
     a.outbound_prompt_template = body.outbound_prompt_template
     a.system_prompt_template = _resolve_system_prompt(body)
@@ -198,7 +210,7 @@ async def update_agent(agent_id: int, body: AgentIn, db: AsyncSession = Depends(
         a.inbound_extension = await allocate_inbound_extension(db)
 
     counts = await _doc_counts(db)
-    return _agent_out(a, counts.get(a.id, 0))
+    return _agent_out(a, counts.get(a.id, 0), org.name)
 
 
 @router.delete("/{agent_id}", status_code=204)

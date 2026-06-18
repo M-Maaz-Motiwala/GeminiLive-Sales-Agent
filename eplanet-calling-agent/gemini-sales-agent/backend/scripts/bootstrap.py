@@ -28,6 +28,10 @@ async def main() -> None:
     print("=== Bootstrap: admin user ===")
     await create_admin(email, password, full_name)
 
+    print("=== Bootstrap: default organization ===")
+    from backend.scripts.seed_organizations import seed_organizations
+    await seed_organizations()
+
     print("=== Bootstrap: sales fleet agents (5) ===")
     await seed_agents()
 

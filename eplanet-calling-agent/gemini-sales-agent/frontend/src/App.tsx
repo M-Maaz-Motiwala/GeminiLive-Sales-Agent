@@ -19,6 +19,7 @@ import Notes from '@/src/pages/admin/Notes';
 import FAQ from '@/src/pages/admin/FAQ';
 import HelpDocs from '@/src/pages/admin/HelpDocs';
 import Settings from '@/src/pages/admin/Settings';
+import Organizations from '@/src/pages/admin/Organizations';
 
 export default function App() {
   return (
@@ -33,6 +34,7 @@ export default function App() {
           >
             <Route index element={<Dashboard />} />
             <Route path="agents" element={<Agents />} />
+            <Route path="organizations" element={<Organizations />} />
             <Route path="sessions" element={<Sessions />} />
             <Route path="sessions/:id" element={<SessionDetail />} />
             <Route path="leads" element={<Leads />} />

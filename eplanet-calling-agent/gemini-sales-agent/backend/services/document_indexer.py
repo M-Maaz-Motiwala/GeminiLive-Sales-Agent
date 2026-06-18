@@ -59,7 +59,13 @@ def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OV
 
 
 @celery_app.task(bind=True, max_retries=3)
-def index_document(self, doc_id: int, file_path: str, agent_id: Optional[int]):
+def index_document(
+    self,
+    doc_id: int,
+    file_path: str,
+    agent_id: Optional[int],
+    organization_id: Optional[int] = None,
+):
     """Extract, chunk, embed, and upsert a document to Pinecone."""
 
     async def _run():
@@ -97,7 +103,12 @@ def index_document(self, doc_id: int, file_path: str, agent_id: Optional[int]):
                     chunks = _chunk_text(text)
                     logger.info("Document %d: %d chunks extracted", doc_id, len(chunks))
 
-                    count = await rag_service.upsert_chunks(doc_id, agent_id, chunks)
+                    count = await rag_service.upsert_chunks(
+                        doc_id,
+                        agent_id,
+                        chunks,
+                        organization_id=doc.organization_id or organization_id,
+                    )
                     if count == 0:
                         raise ValueError("No vectors upserted to Pinecone")
 

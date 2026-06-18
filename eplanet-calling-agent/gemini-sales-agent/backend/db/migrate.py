@@ -22,6 +22,20 @@ _PATCHES = (
     "ALTER TABLE agents ADD COLUMN IF NOT EXISTS did VARCHAR(32)",
     "ALTER TYPE agenttype ADD VALUE IF NOT EXISTS 'support'",
     "CREATE INDEX IF NOT EXISTS ix_agents_did ON agents (did)",
+    """CREATE TABLE IF NOT EXISTS organizations (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        slug VARCHAR(255) UNIQUE NOT NULL,
+        did VARCHAR(32) UNIQUE NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now()
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_organizations_did ON organizations (did)",
+    "ALTER TABLE agents ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id)",
+    "CREATE INDEX IF NOT EXISTS ix_agents_organization_id ON agents (organization_id)",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id)",
+    "CREATE INDEX IF NOT EXISTS ix_documents_organization_id ON documents (organization_id)",
 )
 
 

@@ -37,6 +37,33 @@ def _get_genai() -> genai.Client:
     return _genai_client
 
 
+def namespace_for_document(
+    *,
+    agent_id: Optional[int] = None,
+    organization_id: Optional[int] = None,
+) -> str:
+    if agent_id:
+        return f"agent-{agent_id}"
+    if organization_id:
+        return f"org-{organization_id}"
+    return "global"
+
+
+def namespaces_for_query(
+    *,
+    agent_id: Optional[int] = None,
+    organization_id: Optional[int] = None,
+) -> list[str]:
+    namespaces: list[str] = []
+    if agent_id:
+        namespaces.append(f"agent-{agent_id}")
+    if organization_id:
+        namespaces.append(f"org-{organization_id}")
+    if not namespaces:
+        namespaces.append("global")
+    return namespaces
+
+
 def _index_names(pc: Pinecone) -> list[str]:
     return [i.name for i in pc.list_indexes()]
 
@@ -114,9 +141,15 @@ async def embed_text(text: str) -> list[float]:
     return await loop.run_in_executor(None, _embed)
 
 
-async def upsert_chunks(doc_id: int, agent_id: Optional[int], chunks: list[str]) -> int:
+async def upsert_chunks(
+    doc_id: int,
+    agent_id: Optional[int],
+    chunks: list[str],
+    *,
+    organization_id: Optional[int] = None,
+) -> int:
     """Embed and upsert text chunks to Pinecone. Returns number of vectors upserted."""
-    namespace = f"agent-{agent_id}" if agent_id else "global"
+    namespace = namespace_for_document(agent_id=agent_id, organization_id=organization_id)
     index = await asyncio.get_event_loop().run_in_executor(None, _ensure_index)
 
     vectors = []
@@ -145,14 +178,26 @@ async def upsert_chunks(doc_id: int, agent_id: Optional[int], chunks: list[str])
     return len(vectors)
 
 
-async def query(text: str, agent_id: Optional[int], top_k: int = 5) -> list[dict]:
-    """Query Pinecone for relevant chunks. Searches agent namespace + global."""
-    results, _latency_ms = await query_with_timing(text, agent_id, top_k=top_k)
+async def query(
+    text: str,
+    agent_id: Optional[int],
+    top_k: int = 5,
+    *,
+    organization_id: Optional[int] = None,
+) -> list[dict]:
+    """Query Pinecone for relevant chunks."""
+    results, _latency_ms = await query_with_timing(
+        text, agent_id, top_k=top_k, organization_id=organization_id
+    )
     return results
 
 
 async def query_with_timing(
-    text: str, agent_id: Optional[int], top_k: int = 5
+    text: str,
+    agent_id: Optional[int],
+    top_k: int = 5,
+    *,
+    organization_id: Optional[int] = None,
 ) -> tuple[list[dict], int]:
     """Query Pinecone and return (results, latency_ms)."""
     if not settings.pinecone_api_key:
@@ -162,9 +207,7 @@ async def query_with_timing(
     embedding = await embed_text(text)
     index = await asyncio.get_event_loop().run_in_executor(None, _ensure_index)
 
-    namespaces = ["global"]
-    if agent_id:
-        namespaces.insert(0, f"agent-{agent_id}")
+    namespaces = namespaces_for_query(agent_id=agent_id, organization_id=organization_id)
 
     all_results = []
     seen: set[str] = set()
@@ -209,11 +252,16 @@ async def query_with_timing(
     return all_results[:top_k], latency_ms
 
 
-async def delete_document_vectors(doc_id: int, agent_id: Optional[int]) -> None:
+async def delete_document_vectors(
+    doc_id: int,
+    agent_id: Optional[int],
+    *,
+    organization_id: Optional[int] = None,
+) -> None:
     """Delete all vectors for a document from Pinecone."""
     if not settings.pinecone_api_key:
         return
-    namespace = f"agent-{agent_id}" if agent_id else "global"
+    namespace = namespace_for_document(agent_id=agent_id, organization_id=organization_id)
     index = await asyncio.get_event_loop().run_in_executor(None, _ensure_index)
     try:
         await asyncio.get_event_loop().run_in_executor(

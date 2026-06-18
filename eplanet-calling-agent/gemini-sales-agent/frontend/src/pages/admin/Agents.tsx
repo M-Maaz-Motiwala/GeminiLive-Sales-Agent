@@ -14,7 +14,7 @@ const MODELS = ['gemini-3.1-flash-live-preview', 'gemini-2.5-flash-native-audio-
 
 const EMPTY = {
   name: '',
-  did: '',
+  organization_id: '',
   type: 'sales',
   voice: 'Zephyr',
   model: 'gemini-3.1-flash-live-preview',
@@ -30,7 +30,7 @@ const inputCls = selectCls;
 export default function Agents() {
   const { token } = useAuth();
   const [agents, setAgents] = useState<any[]>([]);
-  const [dids, setDids] = useState<{ did: string; agent_count: number }[]>([]);
+  const [organizations, setOrganizations] = useState<any[]>([]);
   const [editing, setEditing] = useState<any | null>(null);
   const [form, setForm] = useState({ ...EMPTY });
   const [open, setOpen] = useState(false);
@@ -43,7 +43,7 @@ export default function Agents() {
     setLoadError('');
     try {
       setAgents(await apiFetchList('/api/agents', token));
-      setDids(await apiFetchList('/api/agents/dids', token));
+      setOrganizations(await apiFetchList('/api/organizations', token));
     } catch (e) {
       setAgents([]);
       setLoadError(e instanceof Error ? e.message : 'Failed to load agents');
@@ -60,11 +60,14 @@ export default function Agents() {
 
   const save = async () => {
     setError('');
-    if (!form.did.trim()) {
-      setError('Organization DID is required');
+    if (!form.organization_id) {
+      setError('Select an organization');
       return;
     }
-    const payload = { ...form, did: form.did.trim() };
+    const payload = {
+      ...form,
+      organization_id: Number(form.organization_id),
+    };
     const res = await fetch(
       editing ? `${API_BASE}/api/agents/${editing.id}` : `${API_BASE}/api/agents`,
       { method: editing ? 'PUT' : 'POST', headers, body: JSON.stringify(payload) },
@@ -89,8 +92,8 @@ export default function Agents() {
     <div className="p-6 lg:p-10">
       <PageHeader
         title="AI Agents"
-        subtitle="Each DID is an organization — multiple sales agents share inbound/outbound on the same number"
-        action={<BtnPrimary onClick={() => { setEditing(null); setForm({ ...EMPTY }); setError(''); setOpen(true); }}><Plus className="w-4 h-4" /> New agent</BtnPrimary>}
+        subtitle="Sales agents belong to an organization — shared DID for inbound pool and outbound caller ID"
+        action={<BtnPrimary onClick={() => { setEditing(null); setForm({ ...EMPTY, organization_id: organizations[0]?.id ? String(organizations[0].id) : '' }); setError(''); setOpen(true); }}><Plus className="w-4 h-4" /> New agent</BtnPrimary>}
       />
 
       {loadError && (
@@ -99,12 +102,10 @@ export default function Agents() {
         </p>
       )}
 
-      {dids.length > 0 && (
-        <div className="flex flex-wrap gap-2 mb-4">
-          {dids.map(d => (
-            <Badge key={d.did} variant="default">DID {d.did} · {d.agent_count} agent{d.agent_count !== 1 ? 's' : ''}</Badge>
-          ))}
-        </div>
+      {organizations.length === 0 && (
+        <p className="text-sm text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-2 mb-4">
+          No organizations yet. <Link to="/admin/organizations" className="underline">Create an organization</Link> first.
+        </p>
       )}
 
       <div className="grid gap-3">
@@ -115,24 +116,19 @@ export default function Agents() {
                 <span className="font-semibold text-white">{a.name}</span>
                 {a.is_active && <Badge variant="success">Active</Badge>}
                 {a.inbound_extension && <Badge variant="default">Ext {a.inbound_extension}</Badge>}
+                {a.organization_name && <Badge variant="default">{a.organization_name}</Badge>}
                 {a.did && <Badge variant="default">DID {a.did}</Badge>}
               </div>
               <p className="text-xs text-zinc-500 mt-1">
-                {a.type} · {a.voice} · {a.enabled_tools?.length || 0} tools · {a.document_count || 0} KB docs
+                {a.type} · {a.voice} · {a.enabled_tools?.length || 0} tools · {a.document_count || 0} agent KB docs
               </p>
               <p className="text-xs text-orange-400/80 mt-2 flex items-center gap-1">
                 <PhoneOutgoing className="w-3 h-3" />
-                <Link to={`/admin/outbound?agent_id=${a.id}`} className="hover:underline">
-                  Outbound dial from CRM
-                </Link>
+                <Link to={`/admin/outbound?agent_id=${a.id}`} className="hover:underline">Outbound dial from CRM</Link>
               </p>
               {a.inbound_extension && sipServer ? (
                 <p className="text-xs text-violet-400/80 mt-1 flex items-center gap-1">
                   <Phone className="w-3 h-3" /> Lab dial {a.inbound_extension} @ {sipServer}
-                </p>
-              ) : a.did ? (
-                <p className="text-xs text-violet-400/80 mt-1 flex items-center gap-1">
-                  <Phone className="w-3 h-3" /> Inbound on DID {a.did} (shared pool)
                 </p>
               ) : null}
             </div>
@@ -146,7 +142,7 @@ export default function Agents() {
                 setEditing(a);
                 setForm({
                   name: a.name,
-                  did: a.did || '',
+                  organization_id: a.organization_id ? String(a.organization_id) : '',
                   type: 'sales',
                   voice: a.voice,
                   model: a.model,
@@ -165,7 +161,7 @@ export default function Agents() {
             </div>
           </GlassCard>
         ))}
-        {agents.length === 0 && <p className="text-zinc-600 text-sm">No agents yet. Run bootstrap or create one.</p>}
+        {agents.length === 0 && <p className="text-zinc-600 text-sm">No agents yet.</p>}
       </div>
 
       {open && (
@@ -178,24 +174,27 @@ export default function Agents() {
             </div>
             {error && <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-2">{error}</p>}
             <Field label="Name"><input className={inputCls} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></Field>
-            <Field label="Organization DID (required)">
-              <input className={inputCls} value={form.did} placeholder="+12107297915" onChange={e => setForm(f => ({ ...f, did: e.target.value }))} />
-              <p className="text-xs text-zinc-500 mt-1">All agents on this DID share inbound routing. New DIDs work automatically — no Asterisk changes.</p>
+            <Field label="Organization">
+              <select className={selectCls} value={form.organization_id} onChange={e => setForm(f => ({ ...f, organization_id: e.target.value }))}>
+                <option value="">Select organization…</option>
+                {organizations.map(o => (
+                  <option key={o.id} value={o.id}>{o.name} — DID {o.did}</option>
+                ))}
+              </select>
+              <p className="text-xs text-zinc-500 mt-1">
+                <Link to="/admin/organizations" className="text-violet-400 hover:underline">Add organization</Link> to register a new DID first.
+              </p>
             </Field>
             <Field label="Voice"><select className={selectCls} value={form.voice} onChange={e => setForm(f => ({ ...f, voice: e.target.value }))}>{VOICES.map(v => <option key={v} value={v}>{v}</option>)}</select></Field>
             <Field label="Model"><select className={selectCls} value={form.model} onChange={e => setForm(f => ({ ...f, model: e.target.value }))}>{MODELS.map(m => <option key={m} value={m}>{m}</option>)}</select></Field>
             <Field label="Inbound prompt">
-              <textarea rows={8} className={cn(inputCls, 'resize-y')} placeholder="Inbound persona and call flow for this organization..." value={form.inbound_prompt_template} onChange={e => setForm(f => ({ ...f, inbound_prompt_template: e.target.value }))} />
+              <textarea rows={8} className={cn(inputCls, 'resize-y')} placeholder="Inbound persona for this organization..." value={form.inbound_prompt_template} onChange={e => setForm(f => ({ ...f, inbound_prompt_template: e.target.value }))} />
             </Field>
             <Field label="Outbound prompt">
-              <textarea rows={8} className={cn(inputCls, 'resize-y')} placeholder="Outbound cold-call persona and funnel..." value={form.outbound_prompt_template} onChange={e => setForm(f => ({ ...f, outbound_prompt_template: e.target.value }))} />
+              <textarea rows={8} className={cn(inputCls, 'resize-y')} placeholder="Outbound cold-call persona..." value={form.outbound_prompt_template} onChange={e => setForm(f => ({ ...f, outbound_prompt_template: e.target.value }))} />
             </Field>
-            {editing?.inbound_extension && (
-              <p className="text-xs text-zinc-500">SIP extension {editing.inbound_extension} (auto-assigned)</p>
-            )}
-            {!editing && (
-              <p className="text-xs text-zinc-500">SIP lab extension is assigned automatically when the agent is created.</p>
-            )}
+            {editing?.inbound_extension && <p className="text-xs text-zinc-500">SIP extension {editing.inbound_extension} (auto-assigned)</p>}
+            {!editing && <p className="text-xs text-zinc-500">SIP lab extension is assigned automatically.</p>}
             <Field label="Tools">
               <div className="space-y-2 text-sm text-zinc-400">
                 {[...CRM_TOOLS, ...RAG_TOOLS, ...SEARCH_TOOLS].map(t => (

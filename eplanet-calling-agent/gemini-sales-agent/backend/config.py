@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     outbound_trunk_caller_id: str = ""
     max_concurrent_outbound: int = 5
 
+    # CRM-generated Asterisk dialplan (mounted volume in docker-compose)
+    asterisk_generated_dir: str = "/app/asterisk/generated"
+    asterisk_container_name: str = "asterisk"
+
     # Call window (local timezone); disabled by default — set outbound_call_window_enabled=true to enforce
     outbound_call_window_enabled: bool = False
     outbound_call_timezone: str = "UTC"

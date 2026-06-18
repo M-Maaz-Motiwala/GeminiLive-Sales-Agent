@@ -135,7 +135,12 @@ async def preload_agent_context(
 
         agent_type = agent.type.value if hasattr(agent.type, "value") else str(agent.type)
         query = f"{agent.name} {agent_type} {kb_query}"
-        results, latency_ms = await rag_service.query_with_timing(query, agent.id, top_k=top_k)
+        results, latency_ms = await rag_service.query_with_timing(
+            query,
+            agent.id,
+            top_k=top_k,
+            organization_id=agent.organization_id,
+        )
         if not results:
             logger.warning("No KB chunks preloaded for agent %s (%s)", agent.slug, direction)
             return "", {"chunks": [], "query": query, "skipped": "no_results", "direction": direction}

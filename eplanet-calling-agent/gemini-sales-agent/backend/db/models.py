@@ -103,6 +103,21 @@ class PlatformSetting(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    slug = Column(String(255), unique=True, nullable=False, index=True)
+    did = Column(String(32), unique=True, nullable=False, index=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    agents = relationship("Agent", back_populates="organization")
+    documents = relationship("Document", back_populates="organization")
+
+
 class Agent(Base):
     __tablename__ = "agents"
 
@@ -118,6 +133,7 @@ class Agent(Base):
     model = Column(String(100), default="gemini-3.1-flash-live-preview")
     enabled_tools = Column(JSON, default=list)
     inbound_extension = Column(String(10), unique=True, nullable=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
     did = Column(String(32), nullable=True)
     is_active = Column(Boolean, default=True)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -125,6 +141,7 @@ class Agent(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     created_by = relationship("User", back_populates="agents")
+    organization = relationship("Organization", back_populates="agents")
     personas = relationship("Persona", back_populates="agent", cascade="all, delete-orphan")
     sessions = relationship("Session", back_populates="agent")
     documents = relationship("Document", back_populates="agent")
@@ -291,6 +308,7 @@ class Document(Base):
 
     id = Column(Integer, primary_key=True)
     agent_id = Column(Integer, ForeignKey("agents.id"), nullable=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
     name = Column(String(255), nullable=False)
     original_filename = Column(String(255), nullable=False)
     file_path = Column(String(500), nullable=False)
@@ -304,6 +322,7 @@ class Document(Base):
     indexed_at = Column(DateTime(timezone=True), nullable=True)
 
     agent = relationship("Agent", back_populates="documents")
+    organization = relationship("Organization", back_populates="documents")
 
 
 class Output(Base):

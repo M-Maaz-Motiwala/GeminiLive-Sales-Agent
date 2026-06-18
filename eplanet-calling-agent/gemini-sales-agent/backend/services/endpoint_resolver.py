@@ -95,10 +95,19 @@ def resolve_endpoint(
     raise ValueError("No dial endpoint — set phone, endpoint, or OUTBOUND_LAB_ENDPOINT")
 
 
-def resolve_caller_id(override: Optional[str] = None) -> str:
+def resolve_caller_id(
+    override: Optional[str] = None,
+    *,
+    agent_did: Optional[str] = None,
+) -> str:
     mode = (settings.outbound_mode or "lab").strip().lower()
     if override and override.strip():
         return override.strip()
+    if agent_did and agent_did.strip():
+        did = agent_did.strip()
+        if mode == "trunk":
+            return did if did.startswith("+") else f"+{did.lstrip('+')}"
+        return did
     if mode == "trunk" and settings.outbound_trunk_caller_id.strip():
         return settings.outbound_trunk_caller_id.strip()
     return settings.outbound_default_caller_id or "1000"

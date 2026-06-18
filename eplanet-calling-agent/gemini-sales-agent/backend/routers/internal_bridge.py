@@ -149,6 +149,8 @@ async def call_start(
         meta["dialed_did"] = normalize_did(body.dialed_did)
     if agent.did:
         meta["org_did"] = normalize_did(agent.did)
+    if agent.organization_id:
+        meta["organization_id"] = agent.organization_id
     if body.agent_slug:
         meta["agent_slug"] = body.agent_slug
     if body.dialed_endpoint:

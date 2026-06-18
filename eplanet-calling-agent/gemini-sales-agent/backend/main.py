@@ -19,6 +19,7 @@ from backend.routers.outbound import router as outbound_router
 from backend.routers.campaigns import router as campaigns_router
 from backend.routers.dnc import router as dnc_router
 from backend.routers.internal_bridge import router as internal_bridge_router
+from backend.routers.organizations import router as organizations_router
 from backend.routers.system import router as system_router
 from backend.db.database import init_db
 
@@ -62,6 +63,7 @@ app.include_router(calls_router)
 app.include_router(outbound_router)
 app.include_router(campaigns_router)
 app.include_router(dnc_router)
+app.include_router(organizations_router)
 app.include_router(internal_bridge_router)
 app.include_router(system_router)
 
