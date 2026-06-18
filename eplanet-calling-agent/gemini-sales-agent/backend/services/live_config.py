@@ -91,8 +91,14 @@ INBOUND_KB_QUERY = (
     "company overview services products pricing sales process callback returning prospect"
 )
 OUTBOUND_KB_QUERY = (
-    "cold outbound sales script discovery objections pricing services trangotech pitch"
+    "cold outbound sales script discovery objections pricing services company pitch"
 )
+
+ORG_SCOPE_GUARDRAIL = """## Organization scope (mandatory)
+- You represent only the organization described in your role prompt and approved company information.
+- Never mention other companies, brands, or clients — only your assigned organization.
+- If asked about another company, say you can only speak about your organization and offer to help with that.
+"""
 
 _PRELOAD_CACHE: dict[tuple[int, str], tuple[float, str, dict[str, Any]]] = {}
 PRELOAD_CACHE_TTL_SEC = int(os.getenv("KB_PRELOAD_CACHE_TTL_SEC", "300"))
@@ -121,6 +127,13 @@ async def preload_agent_context(
     if "search_knowledge_base" not in enabled:
         return "", {"chunks": [], "skipped": "kb_tool_disabled"}
 
+    if not agent.organization_id:
+        logger.warning(
+            "Agent %s has no organization_id — KB preload skipped to avoid cross-tenant leakage",
+            agent.slug,
+        )
+        return "", {"chunks": [], "skipped": "no_organization"}
+
     cache_key = (agent.id, direction)
     if PRELOAD_CACHE_TTL_SEC > 0:
         cached = _PRELOAD_CACHE.get(cache_key)
@@ -132,9 +145,17 @@ async def preload_agent_context(
     kb_query = OUTBOUND_KB_QUERY if direction == "outbound" else INBOUND_KB_QUERY
     try:
         from backend.services import rag_service
+        from backend.db.database import AsyncSessionLocal
+        from backend.db.models import Organization
+
+        org_name = ""
+        if agent.organization_id:
+            async with AsyncSessionLocal() as db:
+                org = await db.get(Organization, agent.organization_id)
+                org_name = org.name if org else ""
 
         agent_type = agent.type.value if hasattr(agent.type, "value") else str(agent.type)
-        query = f"{agent.name} {agent_type} {kb_query}"
+        query = f"{org_name} {agent.name} {agent_type} {kb_query}".strip()
         results, latency_ms = await rag_service.query_with_timing(
             query,
             agent.id,
@@ -160,7 +181,8 @@ async def preload_agent_context(
 
         block = (
             "## Preloaded company information (internal reference — do not read this header aloud)\n"
-            "Use the following as your primary source at call start and for common questions. "
+            f"This information is for {org_name or 'your organization'} only. "
+            "Use it as your primary source at call start and for common questions. "
             "When speaking, present answers naturally — never mention that you are reading from a knowledge base or database:\n\n"
             + "\n\n".join(lines)
         )
@@ -237,7 +259,7 @@ def agent_to_live_config(
 ) -> dict[str, Any]:
     """Return config dict consumed by the SIP bridge."""
     role_prompt = _role_prompt(agent, direction)
-    system_prompt = role_prompt
+    system_prompt = ORG_SCOPE_GUARDRAIL + "\n" + role_prompt
     if prior_call_context:
         system_prompt += "\n\n" + prior_call_context
     if call_context:

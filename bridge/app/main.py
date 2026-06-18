@@ -240,7 +240,7 @@ _DEFAULT_AUTO_GREETING = (
 )
 _DEFAULT_OUTBOUND_AUTO_GREETING = (
     "The outbound call just connected. Say ONLY a brief warm hello and your name — "
-    "one short sentence. Do NOT mention Trango Tech, pitch, ask for time, or ask about "
+    "one short sentence. Do NOT pitch, ask for time, or ask about "
     "their business yet. Stop and wait for the prospect to respond."
 )
 _auto_greet_env = os.getenv("AUTO_GREETING")

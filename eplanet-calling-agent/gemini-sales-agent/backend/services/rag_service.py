@@ -54,13 +54,12 @@ def namespaces_for_query(
     agent_id: Optional[int] = None,
     organization_id: Optional[int] = None,
 ) -> list[str]:
+    """Strict tenant isolation — never fall back to legacy global for org agents."""
     namespaces: list[str] = []
-    if agent_id:
-        namespaces.append(f"agent-{agent_id}")
     if organization_id:
         namespaces.append(f"org-{organization_id}")
-    if not namespaces:
-        namespaces.append("global")
+    if agent_id:
+        namespaces.append(f"agent-{agent_id}")
     return namespaces
 
 
@@ -208,6 +207,20 @@ async def query_with_timing(
     index = await asyncio.get_event_loop().run_in_executor(None, _ensure_index)
 
     namespaces = namespaces_for_query(agent_id=agent_id, organization_id=organization_id)
+    if not namespaces and agent_id:
+        from backend.db.database import AsyncSessionLocal
+        from backend.db.models import Agent
+
+        async with AsyncSessionLocal() as db:
+            agent = await db.get(Agent, agent_id)
+            if agent and agent.organization_id:
+                namespaces = namespaces_for_query(
+                    agent_id=agent_id,
+                    organization_id=agent.organization_id,
+                )
+
+    if not namespaces:
+        return [], int((time.monotonic() - started) * 1000)
 
     all_results = []
     seen: set[str] = set()

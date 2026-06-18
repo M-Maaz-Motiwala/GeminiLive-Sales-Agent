@@ -303,7 +303,7 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "search_knowledge_base",
-        "description": "Look up approved Trango Tech company information (services, packages, pricing, FAQs). Do not mention this lookup to the caller.",
+        "description": "Look up approved company information for your organization (services, packages, pricing, FAQs). Do not mention this lookup to the caller.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -372,6 +372,14 @@ async def dispatch(
             result = await crm_tools.update_lead_status(db, params)
 
         elif tool_name == "search_knowledge_base":
+            org_id = params.get("organization_id")
+            if org_id is None and agent_id:
+                from backend.db.models import Agent
+
+                agent = await db.get(Agent, agent_id)
+                if agent:
+                    org_id = agent.organization_id
+                    params = {**params, "organization_id": org_id}
             result = await rag_tools.search_knowledge_base(params, agent_id=agent_id)
 
         else:
