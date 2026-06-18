@@ -14,7 +14,8 @@ done
 DIDWW_USER="${DIDWW_SIP_USER:-86vbvm130t}"
 DIDWW_PASS="${DIDWW_SIP_SECRET:-}"
 DIDWW_FROM_DOMAIN="${DIDWW_FROM_DOMAIN:-out.didww.com}"
-DIDWW_FROM_DOMAIN="${DIDWW_FROM_DOMAIN:-out.didww.com}"
+
+if [ -n "${EXTERNAL_IP}" ]; then
   PJSIP_NAT="external_media_address=${EXTERNAL_IP}
 external_signaling_address=${EXTERNAL_IP}"
   RTP_NAT="externaddr=${EXTERNAL_IP}"

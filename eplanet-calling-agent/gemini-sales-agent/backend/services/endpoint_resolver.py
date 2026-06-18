@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from backend.config import get_settings
+from backend.db.models import Lead
 from backend.services.phone_normalize import normalize_did
 from backend.services.phone_utils import (
     lab_pjsip_endpoint,
