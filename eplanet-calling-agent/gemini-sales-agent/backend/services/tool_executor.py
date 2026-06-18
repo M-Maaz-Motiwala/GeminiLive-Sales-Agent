@@ -114,7 +114,11 @@ async def _attach_lead_to_session(
 TOOL_DECLARATIONS = [
     {
         "name": "end_call",
-        "description": "End the current phone call after confirming the caller is done.",
+        "description": (
+            "End the phone call after you have fully spoken your goodbye. "
+            "Call this only once your farewell sentence is complete — the system "
+            "waits for your voice to finish playing before hanging up."
+        ),
         "parameters": {
             "type": "object",
             "properties": {

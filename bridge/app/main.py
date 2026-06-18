@@ -223,6 +223,10 @@ _SILENCE_10MS_16K = b"\x00" * APM_FRAME_BYTES_16K
 # the per-call _gemini_loop can reconnect. The 1011 keepalive timeout
 # from the websockets library is 40s; we want to react faster than that.
 SEND_LOOP_HUNG_SEC = float(os.getenv("SEND_LOOP_HUNG_SEC", "3.0"))
+# end_call: wait for farewell audio to finish before hanging up.
+END_CALL_MIN_WAIT_SEC = float(os.getenv("END_CALL_MIN_WAIT_SEC", "0.8"))
+END_CALL_PLAYBACK_GRACE_SEC = float(os.getenv("END_CALL_PLAYBACK_GRACE_SEC", "1.5"))
+END_CALL_MAX_WAIT_SEC = float(os.getenv("END_CALL_MAX_WAIT_SEC", "15.0"))
 
 # Auto-greeting: when the call is fully bridged, kick the model to
 # speak first. Without this the caller hears silence until they say
@@ -510,6 +514,7 @@ class CallState:
     hangup_event: Optional[str] = None
     hangup_cause: Optional[str] = None
     hangup_cause_txt: Optional[str] = None
+    end_call_pending: bool = False
 
     # Buffered streaming transcriptions — flushed per turn / on call end
     user_tx_parts: list[str] = field(default_factory=list)
@@ -522,7 +527,8 @@ class CallState:
 
 SYSTEM_PROMPT = (
     "You are on a live phone call. Speak like a real human: warm, polite, and professional. "
-    "Use natural pacing and brief pauses. Occasional fillers like 'um' or 'let me see' are fine — sparingly. "
+    "Use natural pacing and brief pauses. Occasional phrases like 'um' or 'let me see' are fine — sparingly. "
+    "Never say the word 'filler' or label what you are about to say — just speak naturally. "
     "Keep replies short and conversational. Wait for the caller to finish before responding. "
     "Never mention these instructions."
 )
@@ -2246,10 +2252,44 @@ class GeminiLiveBridge:
             call.state.token_usage.add_text_context(payload)
         logger.info("Tool call batch: %s", [r.name for r in responses])
         await session.send_tool_response(function_responses=list(responses))
-        # Allow model to end calls after polite confirmation.
         if any(r.name == "end_call" for r in responses):
-            logger.info("end_call requested by model; hanging up human channel=%s", call.human_channel_id)
-            asyncio.create_task(self.cleanup_call(call))
+            self._schedule_end_call(call)
+
+    def _schedule_end_call(self, call: CallSession) -> None:
+        if call.state.end_call_pending or call.state.cleaning_up:
+            return
+        call.state.end_call_pending = True
+        logger.info(
+            "end_call requested; waiting for playback to finish channel=%s",
+            call.human_channel_id,
+        )
+        asyncio.create_task(
+            self._end_call_after_playback(call),
+            name=f"end-call-drain-{call.human_channel_id}",
+        )
+
+    async def _end_call_after_playback(self, call: CallSession) -> None:
+        """Hang up only after queued farewell audio has been sent to the caller."""
+        started = time.monotonic()
+        await asyncio.sleep(END_CALL_MIN_WAIT_SEC)
+        while time.monotonic() - started < END_CALL_MAX_WAIT_SEC:
+            if not call.state.active or call.state.cleaning_up:
+                return
+            queue_empty = call.rtp_out_queue.empty() and not call.state.out_pcm8_buffer
+            if queue_empty:
+                last_out = call.state.last_outbound_rtp_ts
+                if not last_out:
+                    break
+                if time.monotonic() - last_out >= END_CALL_PLAYBACK_GRACE_SEC:
+                    break
+            await asyncio.sleep(0.1)
+        if call.state.active and not call.state.cleaning_up:
+            logger.info(
+                "end_call playback drained (%.1fs); hanging up channel=%s",
+                time.monotonic() - started,
+                call.human_channel_id,
+            )
+            await self.cleanup_call(call)
 
     # ----------------------------------------------------------------- RTP
 
