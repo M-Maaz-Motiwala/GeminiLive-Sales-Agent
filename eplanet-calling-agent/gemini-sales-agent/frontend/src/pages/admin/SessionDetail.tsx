@@ -171,6 +171,38 @@ export default function SessionDetail() {
         </GlassCard>
       )}
 
+      {(contactLine || session.meta?.lead_capture || session.meta?.captured_contact) && (
+        <GlassCard className="p-4 mb-6 border-cyan-500/20">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-cyan-400 mb-2">
+            Contact
+          </div>
+          {contactLine && (
+            <p className="text-sm text-white font-mono">{contactLine}</p>
+          )}
+          {(session.meta?.lead_capture || session.meta?.captured_contact) && (
+            <dl className="mt-2 grid sm:grid-cols-2 gap-2 text-xs text-zinc-400">
+              {['name', 'email', 'phone', 'company'].map(field => {
+                const val =
+                  session.meta?.lead_capture?.[field] ||
+                  session.meta?.captured_contact?.[field];
+                if (!val) return null;
+                return (
+                  <div key={field}>
+                    <dt className="text-zinc-600 capitalize">{field}</dt>
+                    <dd className="text-zinc-200">{val}</dd>
+                  </div>
+                );
+              })}
+            </dl>
+          )}
+          {session.meta?.lead_id && (
+            <Link to="/admin/leads" className="text-xs text-violet-400 hover:underline mt-2 inline-block">
+              Lead #{session.meta.lead_id} in CRM →
+            </Link>
+          )}
+        </GlassCard>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-1 space-y-4 order-2 lg:order-1">
           {session.summary && (

@@ -12,6 +12,7 @@ import Outbound from '@/src/pages/admin/Outbound';
 import Campaigns from '@/src/pages/admin/Campaigns';
 import CampaignDetail from '@/src/pages/admin/CampaignDetail';
 import Contacts from '@/src/pages/admin/Contacts';
+import ContactDetail from '@/src/pages/admin/ContactDetail';
 import Documents from '@/src/pages/admin/Documents';
 import Outputs from '@/src/pages/admin/Outputs';
 import Notes from '@/src/pages/admin/Notes';
@@ -39,6 +40,7 @@ export default function App() {
             <Route path="campaigns" element={<Campaigns />} />
             <Route path="campaigns/:id" element={<CampaignDetail />} />
             <Route path="contacts" element={<Contacts />} />
+            <Route path="contacts/:id" element={<ContactDetail />} />
             <Route path="documents" element={<Documents />} />
             <Route path="outputs" element={<Outputs />} />
             <Route path="notes" element={<Notes />} />

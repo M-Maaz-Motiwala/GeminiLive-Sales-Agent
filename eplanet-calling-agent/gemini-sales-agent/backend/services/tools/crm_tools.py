@@ -5,9 +5,12 @@ from datetime import datetime, timezone
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.config import get_settings
 from backend.db.models import Lead, Contact, Note, LeadStatus
+from backend.services.phone_utils import normalize_e164
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 
 LEAD_PROFILE_FIELDS = (
@@ -62,13 +65,61 @@ def _extract_profile(params: dict, existing: dict | None = None) -> dict:
     return profile
 
 
+async def upsert_contact_from_lead(db: AsyncSession, lead: Lead) -> Contact | None:
+    """Mirror captured leads into the contacts directory for the CRM UI."""
+    name = (lead.name or "").strip()
+    if not name:
+        return None
+    phone = (lead.phone or "").strip() or None
+    email = (lead.email or "").strip() or None
+    existing: Contact | None = None
+    if phone:
+        result = await db.execute(
+            select(Contact).where(Contact.phone == phone).order_by(Contact.id.desc()).limit(1)
+        )
+        existing = result.scalar_one_or_none()
+    if existing is None and email:
+        result = await db.execute(
+            select(Contact).where(Contact.email == email).order_by(Contact.id.desc()).limit(1)
+        )
+        existing = result.scalar_one_or_none()
+    if existing:
+        existing.name = name
+        if phone:
+            existing.phone = phone
+        if email:
+            existing.email = email
+        if lead.company:
+            existing.company = lead.company
+        if lead.notes:
+            existing.notes = lead.notes
+        await db.flush()
+        return existing
+    contact = Contact(
+        name=name,
+        email=email,
+        phone=phone,
+        company=lead.company,
+        notes=lead.notes,
+        tags=lead.tags or [],
+    )
+    db.add(contact)
+    await db.flush()
+    return contact
+
+
 async def create_lead(db: AsyncSession, params: dict) -> dict:
     session_id = params.get("source_session_id")
     lead_profile = _extract_profile(params)
+    phone = params.get("phone")
+    phone_e164 = None
+    if phone:
+        phone_e164 = normalize_e164(str(phone), settings.outbound_default_country_code)
     lead = Lead(
         name=params.get("name", "Unknown"),
         email=params.get("email"),
-        phone=params.get("phone"),
+        phone=phone,
+        phone_e164=phone_e164,
         company=params.get("company"),
         notes=params.get("notes"),
         lead_profile=lead_profile,
@@ -78,7 +129,11 @@ async def create_lead(db: AsyncSession, params: dict) -> dict:
     )
     db.add(lead)
     await db.flush()
-    return {"status": "created", "lead_id": lead.id, "name": lead.name}
+    contact = await upsert_contact_from_lead(db, lead)
+    out: dict = {"status": "created", "lead_id": lead.id, "name": lead.name}
+    if contact:
+        out["contact_id"] = contact.id
+    return out
 
 
 async def search_contacts(db: AsyncSession, params: dict) -> dict:
@@ -89,15 +144,20 @@ async def search_contacts(db: AsyncSession, params: dict) -> dict:
                 Contact.name.ilike(f"%{query_str}%"),
                 Contact.email.ilike(f"%{query_str}%"),
                 Contact.company.ilike(f"%{query_str}%"),
+                Contact.phone.ilike(f"%{query_str}%"),
             )
         ).limit(5)
     )
     contacts = result.scalars().all()
     return {
+        "contacts": [
+            {"id": c.id, "name": c.name, "email": c.email, "phone": c.phone, "company": c.company}
+            for c in contacts
+        ],
         "results": [
             {"id": c.id, "name": c.name, "email": c.email, "phone": c.phone, "company": c.company}
             for c in contacts
-        ]
+        ],
     }
 
 
@@ -158,6 +218,8 @@ async def update_lead_details(db: AsyncSession, params: dict) -> dict:
             if new_val != (old_val or ""):
                 setattr(lead, field, new_val)
                 changed[field] = new_val
+    if "phone" in changed:
+        lead.phone_e164 = normalize_e164(changed["phone"], settings.outbound_default_country_code)
 
     existing_profile = lead.lead_profile if isinstance(lead.lead_profile, dict) else {}
     updated_profile = _extract_profile(params, existing_profile)
@@ -165,9 +227,13 @@ async def update_lead_details(db: AsyncSession, params: dict) -> dict:
         lead.lead_profile = updated_profile
         changed["lead_profile"] = "updated"
 
-    await db.flush()
-    return {
+        await db.flush()
+    contact = await upsert_contact_from_lead(db, lead)
+    result = {
         "status": "updated",
         "lead_id": lead.id,
         "changed_fields": changed,
     }
+    if contact:
+        result["contact_id"] = contact.id
+    return result

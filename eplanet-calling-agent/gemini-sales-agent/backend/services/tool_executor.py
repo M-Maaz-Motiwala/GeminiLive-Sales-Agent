@@ -59,6 +59,59 @@ def _extract_lead_profile(params: dict, existing: dict | None = None) -> dict:
     return profile
 
 
+_SAME_PHONE_MARKERS = (
+    "same",
+    "this number",
+    "the number",
+    "number you",
+    "number i'm",
+    "number i am",
+    "called me",
+    "calling me",
+    "you called",
+    "you're calling",
+    "you are calling",
+    "current number",
+    "that's my number",
+    "that is my number",
+)
+
+
+def _should_use_session_phone(phone) -> bool:
+    if phone is None:
+        return True
+    raw = str(phone).strip()
+    if not raw:
+        return True
+    low = raw.lower()
+    if low in {"yes", "yeah", "yep", "correct", "same", "sure"}:
+        return True
+    return any(marker in low for marker in _SAME_PHONE_MARKERS)
+
+
+async def _apply_session_phone_fallback(
+    db: AsyncSession,
+    session_id: int | None,
+    params: dict,
+) -> None:
+    if not session_id or not _should_use_session_phone(params.get("phone")):
+        return
+    from backend.db.models import Session as DBSession
+
+    sess = await db.get(DBSession, session_id)
+    if not sess:
+        return
+    meta = sess.meta or {}
+    fallback = (
+        meta.get("prospect_phone_e164")
+        or meta.get("prospect_phone")
+        or meta.get("contact_number")
+        or meta.get("lead_phone")
+    )
+    if fallback:
+        params["phone"] = str(fallback).strip()
+
+
 async def _attach_lead_to_session(
     db: AsyncSession,
     session_id: int,
@@ -138,14 +191,27 @@ TOOL_DECLARATIONS = [
             "properties": {
                 "name": {"type": "string", "description": "Full name of the lead"},
                 "email": {"type": "string", "description": "Email address"},
-                "phone": {"type": "string", "description": "Phone number"},
+                "phone": {
+                    "type": "string",
+                    "description": (
+                        "Phone number. On outbound calls, if they say it is the same number "
+                        "you called or 'this number', omit or pass 'same' — the system uses the dialed number."
+                    ),
+                },
                 "company": {"type": "string", "description": "Company name"},
                 "notes": {"type": "string", "description": "Any additional notes about the lead"},
                 "industry": {"type": "string", "description": "Prospect industry"},
                 "service_required": {"type": "string", "description": "Service required by prospect"},
                 "budget": {"type": "string", "description": "Budget shared by prospect"},
                 "timeline": {"type": "string", "description": "Timeline shared by prospect"},
-                "preferred_meeting_time": {"type": "string", "description": "Preferred time for follow-up meeting"},
+                "preferred_meeting_time": {
+                    "type": "string",
+                    "description": (
+                        "Agreed follow-up time including timezone(s), e.g. "
+                        "'Tue 2:00 PM EST / 1:00 PM CST'. Only set after prospect "
+                        "confirmed their timezone."
+                    ),
+                },
                 "requirement": {"type": "string", "description": "Requirement summary"},
                 "recommended_service_package": {"type": "string", "description": "Recommended service/package"},
                 "key_features": {"type": "array", "items": {"type": "string"}, "description": "Key requested features"},
@@ -187,7 +253,14 @@ TOOL_DECLARATIONS = [
                 "service_required": {"type": "string", "description": "Service required by prospect"},
                 "budget": {"type": "string", "description": "Budget shared by prospect"},
                 "timeline": {"type": "string", "description": "Timeline shared by prospect"},
-                "preferred_meeting_time": {"type": "string", "description": "Preferred time for follow-up meeting"},
+                "preferred_meeting_time": {
+                    "type": "string",
+                    "description": (
+                        "Agreed follow-up time including timezone(s), e.g. "
+                        "'Tue 2:00 PM EST / 1:00 PM CST'. Only set after prospect "
+                        "confirmed their timezone."
+                    ),
+                },
                 "requirement": {"type": "string", "description": "Requirement summary"},
                 "recommended_service_package": {"type": "string", "description": "Recommended service/package"},
                 "key_features": {"type": "array", "items": {"type": "string"}, "description": "Key requested features"},
@@ -269,6 +342,7 @@ async def dispatch(
         if tool_name == "create_lead":
             if session_id:
                 params["source_session_id"] = session_id
+            await _apply_session_phone_fallback(db, session_id, params)
             result = await crm_tools.create_lead(db, params)
             if session_id and db and result.get("lead_id"):
                 await _attach_lead_to_session(db, session_id, result["lead_id"], params)
@@ -288,6 +362,7 @@ async def dispatch(
         elif tool_name == "update_lead_details":
             if session_id:
                 params["source_session_id"] = session_id
+            await _apply_session_phone_fallback(db, session_id, params)
             result = await crm_tools.update_lead_details(db, params)
             if session_id and db and result.get("lead_id"):
                 await _attach_lead_to_session(db, session_id, result["lead_id"], params)

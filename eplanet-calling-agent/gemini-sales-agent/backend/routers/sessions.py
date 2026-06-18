@@ -12,6 +12,7 @@ from backend.db.models import Session as DBSession, Message, ToolCall, Output, O
 from backend.services import summarizer
 from backend.services.post_call import process_call_end
 from backend.services.session_reconcile import reconcile_stale_bridge_sessions
+from backend.services.session_display import enrich_session_dict
 from backend.services.session_timeline import build_timeline, merge_message_turns
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -57,6 +58,7 @@ async def list_sessions(
                 "inbound_extension": s.agent.inbound_extension,
             }
         out["output_types"] = [o.output_type.value for o in (s.outputs or [])]
+        enrich_session_dict(s, out)
         rows.append(out)
     return rows
 
@@ -90,15 +92,18 @@ async def get_session(session_id: int, db: AsyncSession = Depends(get_db), _=Dep
             "inbound_extension": s.agent.inbound_extension,
         }
 
-    return {
-        **_session_out(s),
-        "agent": agent_info,
-        "turns": turns,
-        "timeline": timeline,
-        "messages": [{"id": m.id, "role": m.role, "text": m.text, "timestamp": m.timestamp} for m in s.messages],
-        "tool_calls": [{"id": tc.id, "tool_name": tc.tool_name, "parameters": tc.parameters, "result": tc.result, "called_at": tc.called_at, "duration_ms": tc.duration_ms} for tc in s.tool_calls],
-        "outputs": [{"id": o.id, "output_type": o.output_type.value, "content": o.content, "created_at": o.created_at} for o in s.outputs],
-    }
+    return enrich_session_dict(
+        s,
+        {
+            **_session_out(s),
+            "agent": agent_info,
+            "turns": turns,
+            "timeline": timeline,
+            "messages": [{"id": m.id, "role": m.role, "text": m.text, "timestamp": m.timestamp} for m in s.messages],
+            "tool_calls": [{"id": tc.id, "tool_name": tc.tool_name, "parameters": tc.parameters, "result": tc.result, "called_at": tc.called_at, "duration_ms": tc.duration_ms} for tc in s.tool_calls],
+            "outputs": [{"id": o.id, "output_type": o.output_type.value, "content": o.content, "created_at": o.created_at} for o in s.outputs],
+        },
+    )
 
 
 @router.post("/{session_id}/summarize")

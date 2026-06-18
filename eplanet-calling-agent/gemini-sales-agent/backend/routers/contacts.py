@@ -35,7 +35,12 @@ async def list_contacts(
 ):
     q = select(Contact).order_by(Contact.created_at.desc()).limit(limit)
     if search:
-        q = q.where(or_(Contact.name.ilike(f"%{search}%"), Contact.email.ilike(f"%{search}%")))
+        q = q.where(or_(
+            Contact.name.ilike(f"%{search}%"),
+            Contact.email.ilike(f"%{search}%"),
+            Contact.phone.ilike(f"%{search}%"),
+            Contact.company.ilike(f"%{search}%"),
+        ))
     result = await db.execute(q)
     return [_out(c) for c in result.scalars().all()]
 

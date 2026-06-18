@@ -35,6 +35,7 @@ from backend.routers.system import SETTING_MASTER_PROMPT
 from backend.services.live_config import (
     agent_to_live_config,
     format_lead_context,
+    format_outbound_call_context,
     preload_agent_context,
 )
 from backend.services.post_call import process_call_end
@@ -235,6 +236,7 @@ async def call_start(
         kb_context=kb_block,
         lead_context=lead_context,
         prior_call_context=prior_call_context,
+        call_context=format_outbound_call_context(meta) if direction == "outbound" else "",
         direction=direction,
         global_master_prompt=global_master_prompt,
     )

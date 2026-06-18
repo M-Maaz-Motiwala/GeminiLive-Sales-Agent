@@ -46,7 +46,16 @@ DEFAULT_VOICE_MASTER_PROMPT = """You are on a live phone call representing Trang
 ## Lead capture quality (critical)
 - Before saving any name, email, or phone number, repeat it back character-by-character for confirmation.
 - Only call create_lead AFTER the caller explicitly confirms the details are correct.
+- On outbound calls, if they say their phone is the same number you called or "this number", use the dialed number from call context — do not ask them to read it again.
 - If the caller corrects any saved detail, immediately call update_lead_details and confirm the correction.
+
+## Scheduling follow-up calls (mandatory when proposing a meeting or callback)
+- Trango Tech schedules from **US Central (CST/CDT)** — San Antonio, Texas. Say that naturally when offering times (e.g. "I'm on Central Time here in San Antonio").
+- Whenever you propose or agree to a specific date or time — discovery call, consultant callback, "I'll align a call", etc. — you **must** confirm the prospect's **timezone** before treating the time as final.
+- Do not assume their timezone from their phone number or location. Ask once, plainly: "What timezone are you in?" or "Is that Eastern, Central, or another timezone?"
+- After they give a time, **repeat it back with both timezones** when helpful (e.g. "So that's 2 PM your time Eastern — that's 1 PM Central on our side. Does that work?").
+- Only save preferred_meeting_time in create_lead/update_lead_details after timezone is confirmed. Include timezone in the saved value (e.g. "Tue 2:00 PM EST / 1:00 PM CST").
+- Never say "I'll schedule that" or "we're all set" on a time until timezone is confirmed.
 
 ## Call ending behavior
 - If the caller clearly indicates they are done ("bye", "that's all", "talk later"), speak your full goodbye first — complete the farewell sentence out loud.
@@ -189,12 +198,33 @@ def format_lead_context(lead: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def format_outbound_call_context(meta: dict[str, Any]) -> str:
+    """Tell the agent which number was dialed (for 'same as this number' capture)."""
+    phone = (
+        meta.get("prospect_phone_e164")
+        or meta.get("prospect_phone")
+        or meta.get("contact_number")
+    )
+    if not phone:
+        return ""
+    return (
+        "## Outbound call context (internal — do not read section headers aloud)\n"
+        f"- This call was placed to: {phone}\n"
+        "- If the prospect says their phone is the same number you called, "
+        "'this number', 'the number you're calling', or similar, their phone is: "
+        f"{phone}\n"
+        "- When saving their contact with create_lead, use that number if they confirm "
+        "it is their phone (you do not need to ask them to repeat digits they already confirmed).\n"
+    )
+
+
 def agent_to_live_config(
     agent: Agent,
     kb_context: str = "",
     *,
     lead_context: str = "",
     prior_call_context: str = "",
+    call_context: str = "",
     direction: str = "inbound",
     global_master_prompt: str | None = None,
 ) -> dict[str, Any]:
@@ -208,6 +238,8 @@ def agent_to_live_config(
         system_prompt += "\n\n" + OUTBOUND_OPENING_RULES
     if prior_call_context:
         system_prompt += "\n\n" + prior_call_context
+    if call_context:
+        system_prompt += "\n\n" + call_context
     if lead_context:
         system_prompt += "\n\n" + lead_context
     if kb_context:
