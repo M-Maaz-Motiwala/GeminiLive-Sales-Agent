@@ -40,6 +40,11 @@ class ChannelType(str, enum.Enum):
     outbound = "outbound"
 
 
+class VoiceGender(str, enum.Enum):
+    male = "male"
+    female = "female"
+
+
 class LeadStatus(str, enum.Enum):
     new = "new"
     qualified = "qualified"
@@ -130,6 +135,7 @@ class Agent(Base):
     outbound_prompt_template = Column(Text, nullable=True)
     master_prompt_override = Column(Text, nullable=True)  # overrides global master prompt for this agent
     voice = Column(String(100), default="Zephyr")
+    voice_gender = Column(Enum(VoiceGender), default=VoiceGender.female, nullable=False)
     model = Column(String(100), default="gemini-3.1-flash-live-preview")
     enabled_tools = Column(JSON, default=list)
     inbound_extension = Column(String(10), unique=True, nullable=True, index=True)

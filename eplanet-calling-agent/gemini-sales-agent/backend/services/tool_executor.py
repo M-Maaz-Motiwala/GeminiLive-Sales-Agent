@@ -186,7 +186,14 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "create_lead",
+<<<<<<< HEAD
         "description": "Save a new sales lead captured during the conversation.",
+=======
+        "description": (
+            "Save a new sales lead captured during the conversation. "
+            "Only call after repeating/spelling back and confirming name, email, company, and phone with the caller."
+        ),
+>>>>>>> newImp
         "parameters": {
             "type": "object",
             "properties": {
@@ -237,7 +244,14 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "update_lead_details",
+<<<<<<< HEAD
         "description": "Update an existing lead when caller corrects name/email/phone/company.",
+=======
+        "description": (
+            "Update an existing lead when the caller corrects details. "
+            "Repeat or spell back the corrected name, email, company, and phone before saving."
+        ),
+>>>>>>> newImp
         "parameters": {
             "type": "object",
             "properties": {

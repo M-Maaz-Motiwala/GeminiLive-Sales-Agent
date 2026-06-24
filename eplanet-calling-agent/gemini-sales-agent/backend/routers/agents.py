@@ -8,7 +8,7 @@ from typing import Optional
 
 from backend.auth.deps import get_current_user
 from backend.db.database import get_db
-from backend.db.models import Agent, Persona, AgentType, User, Document, Organization
+from backend.db.models import Agent, Persona, AgentType, User, Document, Organization, VoiceGender
 from backend.services.agent_provisioning import (
     agent_type_needs_extension,
     allocate_inbound_extension,
@@ -32,6 +32,7 @@ class AgentIn(BaseModel):
     inbound_prompt_template: Optional[str] = None
     outbound_prompt_template: Optional[str] = None
     voice: str = "Zephyr"
+    voice_gender: str = "female"
     model: str = "gemini-3.1-flash-live-preview"
     enabled_tools: list = []
     is_active: bool = True
@@ -49,6 +50,7 @@ def _agent_out(a: Agent, doc_count: int = 0, org_name: Optional[str] = None) -> 
         "inbound_prompt_template": a.inbound_prompt_template,
         "outbound_prompt_template": a.outbound_prompt_template,
         "voice": a.voice,
+        "voice_gender": a.voice_gender,
         "model": a.model,
         "enabled_tools": a.enabled_tools or [],
         "inbound_extension": a.inbound_extension,
@@ -136,6 +138,7 @@ async def create_agent(
         inbound_prompt_template=body.inbound_prompt_template,
         outbound_prompt_template=body.outbound_prompt_template,
         voice=body.voice,
+        voice_gender=body.voice_gender,
         model=body.model,
         enabled_tools=body.enabled_tools,
         inbound_extension=inbound_extension,
@@ -202,6 +205,7 @@ async def update_agent(
     a.outbound_prompt_template = body.outbound_prompt_template
     a.system_prompt_template = _resolve_system_prompt(body)
     a.voice = body.voice
+    a.voice_gender = body.voice_gender
     a.model = body.model
     a.enabled_tools = body.enabled_tools
     a.is_active = body.is_active
