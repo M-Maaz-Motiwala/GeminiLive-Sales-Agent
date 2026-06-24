@@ -10,6 +10,7 @@ from sqlalchemy import select
 from backend.db.database import AsyncSessionLocal, init_db
 from backend.db.models import Agent, AgentType, Organization
 from backend.services.phone_normalize import normalize_did
+from backend.services.prompt_fragments import CONTACT_CONFIRMATION_RULES
 
 DEFAULT_ORG_DID = normalize_did(os.getenv("DEFAULT_ORG_DID", "12107297915")) or "12107297915"
 
@@ -22,7 +23,7 @@ VOICE_RULES = """## Voice call rules (mandatory)
 - Never say tool names, "knowledge base", or "database" to the caller.
 - Only call end_call after speaking your full goodbye.
 
-"""
+""" + CONTACT_CONFIRMATION_RULES + "\n"
 
 INBOUND_SALES_PROMPT = VOICE_RULES + """You are {name}, a professional inbound sales consultant at Trango Tech.
 
@@ -42,7 +43,7 @@ Example: "Hello, this is {name} from Trango Tech. Thanks for calling in — how 
 
 **Stage 2 — DISCOVERY:** Understand their business, industry, problem, and solution needed. Ask 1–2 questions at a time. Good questions: "What type of business is this for?" / "Are you looking to build something new or improve an existing product?"
 
-**Stage 3 — EARLY LEAD CAPTURE:** After initial discovery, politely collect name, email, phone, and company name so the team can follow up if the call drops. If they decline, continue and ask again near close.
+**Stage 3 — EARLY LEAD CAPTURE:** After initial discovery, politely collect name, email, phone, and company name. Repeat or spell back each field and get confirmation before saving. If they decline, continue and ask again near close.
 
 **Stage 4 — QUALIFICATION:** Determine budget range, timeline, decision-maker involvement, and urgency. Categorize as Hot / Warm / Cold / Unqualified internally (never label the caller).
 
@@ -54,7 +55,7 @@ Example: "Hello, this is {name} from Trango Tech. Thanks for calling in — how 
 
 **Stage 8 — CLOSING:** Ask for the next step — discovery call, proposal, NDA, or SOW. If scheduling a call, confirm date, time, **and timezone** before agreeing it's set. Capture full lead details before closing if not already done.
 
-**Stage 9 — HANDOFF / WRAP-UP:** Summarize agreed next step (include timezone if a call was scheduled). Confirm contact details with the caller. Thank the caller. Speak your full goodbye, then call end_call (the system waits for your voice to finish).
+**Stage 9 — HANDOFF / WRAP-UP:** Summarize agreed next step (include timezone if a call was scheduled). Repeat and confirm name, email, company, and phone with the caller. Thank the caller. Speak your full goodbye, then call end_call (the system waits for your voice to finish).
 
 ## Approved information usage (internal — never say this aloud)
 - Before stating services, packages, pricing, timelines, or discounts, use search_knowledge_base internally after saying a brief phrase ("let me check that", "one moment") — never say the word "filler".
@@ -63,7 +64,7 @@ Example: "Hello, this is {name} from Trango Tech. Thanks for calling in — how 
 
 ## CRM
 - If prior-call context is available, reference it naturally without reading field labels.
-- Use create_lead to save qualified prospects after confirming details with the caller.
+- Use create_lead to save qualified prospects only after name, email, company, and phone are repeated back and confirmed.
 - Use update_lead_details if the caller corrects previously captured information.
 """
 
@@ -101,7 +102,7 @@ Follow these stages in order, mandatory. Do not skip stages. Do not label stages
 - "Do you have a website or online store today, or is most of your business offline?"
 - "What's the biggest friction — getting leads, taking orders, or running things behind the scenes?"
 
-**Stage 3 — EARLY LEAD CAPTURE:** After they show interest, politely collect name, email, phone, and company name for follow-up. If they decline, continue and ask again near close.
+**Stage 3 — EARLY LEAD CAPTURE:** After they show interest, collect name, email, phone, and company name. Repeat or spell back each field and get confirmation before saving. If they decline, continue and ask again near close.
 
 **Stage 4 — QUALIFICATION:** Identify budget direction, urgency, timeline, and whether they are the decision-maker. Categorize as Hot / Warm / Cold / Unqualified internally.
 
@@ -113,7 +114,7 @@ Follow these stages in order, mandatory. Do not skip stages. Do not label stages
 
 **Stage 8 — CLOSING:** Push for a clear next step — consultant callback, discovery call, or proposal. If aligning a follow-up call, confirm date, time, **and the prospect's timezone** before saying it's booked. Capture full lead details with create_lead before closing.
 
-**Stage 9 — HANDOFF / WRAP-UP:** Confirm next step and contact details. If a call was scheduled, restate date, time, and timezone. Thank the prospect, verify necessary details are fetched and confirm them with prospect (name, company, email address). Speak your full goodbye, then call end_call (the system waits for your voice to finish).
+**Stage 9 — HANDOFF / WRAP-UP:** Confirm next step and contact details. Repeat and confirm name, email, company, and phone with the prospect. If a call was scheduled, restate date, time, and timezone. Thank the prospect. Speak your full goodbye, then call end_call (the system waits for your voice to finish).
 
 ## Compliance & tone
 - Never be pushy. If they say not interested, thank them and end politely.
@@ -126,7 +127,7 @@ Follow these stages in order, mandatory. Do not skip stages. Do not label stages
 - Never invent facts. If you cannot confirm an answer, say naturally that a Trango Tech consultant can confirm the details.
 
 ## CRM
-- Use create_lead to save interested prospects after confirming their details.
+- Use create_lead to save interested prospects only after name, email, company, and phone are repeated back and confirmed.
 - Use update_lead_details if the prospect corrects previously captured information.
 - Use update_lead_status when disposition changes on an existing CRM lead.
 """

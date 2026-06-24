@@ -9,7 +9,38 @@ import { cn } from '@/lib/utils';
 const CRM_TOOLS = ['create_lead', 'search_contacts', 'create_note', 'update_lead_status'];
 const RAG_TOOLS = ['search_knowledge_base'];
 const SEARCH_TOOLS = ['google_search'];
-const VOICES = ['Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Aoede'];
+const VOICES = [
+  { name: 'Zephyr', style: 'Bright' },
+  { name: 'Puck', style: 'Upbeat' },
+  { name: 'Charon', style: 'Informative' },
+  { name: 'Kore', style: 'Firm' },
+  { name: 'Fenrir', style: 'Excitable' },
+  { name: 'Leda', style: 'Youthful' },
+  { name: 'Orus', style: 'Firm' },
+  { name: 'Aoede', style: 'Breezy' },
+  { name: 'Callirrhoe', style: 'Easy-going' },
+  { name: 'Autonoe', style: 'Bright' },
+  { name: 'Enceladus', style: 'Breathy' },
+  { name: 'Iapetus', style: 'Clear' },
+  { name: 'Umbriel', style: 'Easy-going' },
+  { name: 'Algieba', style: 'Smooth' },
+  { name: 'Despina', style: 'Smooth' },
+  { name: 'Erinome', style: 'Clear' },
+  { name: 'Algenib', style: 'Gravelly' },
+  { name: 'Rasalgethi', style: 'Informative' },
+  { name: 'Laomedeia', style: 'Upbeat' },
+  { name: 'Achernar', style: 'Soft' },
+  { name: 'Alnilam', style: 'Firm' },
+  { name: 'Schedar', style: 'Even' },
+  { name: 'Gacrux', style: 'Mature' },
+  { name: 'Pulcherrima', style: 'Forward' },
+  { name: 'Achird', style: 'Friendly' },
+  { name: 'Zubenelgenubi', style: 'Casual' },
+  { name: 'Vindemiatrix', style: 'Gentle' },
+  { name: 'Sadachbia', style: 'Lively' },
+  { name: 'Sadaltager', style: 'Knowledgeable' },
+  { name: 'Sulafat', style: 'Warm' },
+];
 const MODELS = ['gemini-3.1-flash-live-preview', 'gemini-2.5-flash-native-audio-preview-12-2025'];
 
 const EMPTY = {
@@ -185,7 +216,15 @@ export default function Agents() {
                 <Link to="/admin/organizations" className="text-violet-400 hover:underline">Add organization</Link> to register a new DID first.
               </p>
             </Field>
-            <Field label="Voice"><select className={selectCls} value={form.voice} onChange={e => setForm(f => ({ ...f, voice: e.target.value }))}>{VOICES.map(v => <option key={v} value={v}>{v}</option>)}</select></Field>
+            <Field label="Voice">
+              <select className={selectCls} value={form.voice} onChange={e => setForm(f => ({ ...f, voice: e.target.value }))}>
+                {VOICES.map(v => (
+                  <option key={v.name} value={v.name}>
+                    {v.name} - {v.style}{v.name === 'Sulafat' ? ' (most human-like)' : ''}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Field label="Model"><select className={selectCls} value={form.model} onChange={e => setForm(f => ({ ...f, model: e.target.value }))}>{MODELS.map(m => <option key={m} value={m}>{m}</option>)}</select></Field>
             <Field label="Inbound prompt">
               <textarea rows={8} className={cn(inputCls, 'resize-y')} placeholder="Inbound persona for this organization..." value={form.inbound_prompt_template} onChange={e => setForm(f => ({ ...f, inbound_prompt_template: e.target.value }))} />

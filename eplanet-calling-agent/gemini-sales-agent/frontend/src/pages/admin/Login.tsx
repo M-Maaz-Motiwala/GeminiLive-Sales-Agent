@@ -72,7 +72,7 @@ export default function Login() {
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
-              placeholder="changeme123"
+              placeholder="***********"
               required
               autoComplete="current-password"
             />
@@ -82,7 +82,7 @@ export default function Login() {
           </form>
 
           <p className="text-[11px] text-zinc-600 text-center mt-6 leading-relaxed">
-            Default: <span className="text-zinc-500">admin@aura.ai</span> / <span className="text-zinc-500">changeme123</span>
+            Default: <span className="text-zinc-500">admin@aura.ai</span> / <span className="text-zinc-500">**********</span>
             <br />
             Change in <code className="text-violet-400/80">.env</code> → ADMIN_EMAIL / ADMIN_PASSWORD
           </p>

@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 from backend.db.models import Agent, AgentType
 from backend.services.gemini_live import SYSTEM_PROMPTS
+from backend.services.prompt_fragments import CONTACT_CONFIRMATION_RULES
 from backend.services.tool_executor import get_tool_declarations
 
 logger = logging.getLogger(__name__)
@@ -44,8 +45,8 @@ DEFAULT_VOICE_MASTER_PROMPT = """You are on a live phone call representing Trang
 - Speak as a Trango Tech sales consultant on a phone call — not as software running a lookup.
 
 ## Lead capture quality (critical)
-- Before saving any name, email, or phone number, repeat it back character-by-character for confirmation.
-- Only call create_lead AFTER the caller explicitly confirms the details are correct.
+- Before saving any contact details, follow the contact confirmation rules: repeat or spell back **name, email, company name, and phone number** and get explicit confirmation.
+- Only call create_lead AFTER the caller explicitly confirms all captured details are correct.
 - On outbound calls, if they say their phone is the same number you called or "this number", use the dialed number from call context — do not ask them to read it again.
 - If the caller corrects any saved detail, immediately call update_lead_details and confirm the correction.
 
@@ -259,7 +260,7 @@ def agent_to_live_config(
 ) -> dict[str, Any]:
     """Return config dict consumed by the SIP bridge."""
     role_prompt = _role_prompt(agent, direction)
-    system_prompt = ORG_SCOPE_GUARDRAIL + "\n" + role_prompt
+    system_prompt = ORG_SCOPE_GUARDRAIL + "\n" + CONTACT_CONFIRMATION_RULES + "\n" + role_prompt
     if prior_call_context:
         system_prompt += "\n\n" + prior_call_context
     if call_context:

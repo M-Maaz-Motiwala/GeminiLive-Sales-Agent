@@ -2,7 +2,7 @@
 import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.auth.deps import get_current_user
 from backend.db.database import get_db
 from backend.db.models import PlatformSetting
+from backend.services.telephony_diagnostics import (
+    DEFAULT_LOG_TAIL,
+    MAX_LOG_TAIL,
+    fetch_container_logs,
+    list_containers,
+    run_telephony_diagnostics,
+)
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 
@@ -117,3 +124,30 @@ async def update_settings(
         else:
             db.add(PlatformSetting(key=SETTING_MASTER_PROMPT, value=body.master_prompt or None))
     return SettingsOut(master_prompt=body.master_prompt)
+
+
+@router.get("/diagnostics")
+async def telephony_diagnostics(_=Depends(get_current_user)) -> dict:
+    """Telephony + Docker health checks (admin UI — no SSH)."""
+    return run_telephony_diagnostics()
+
+
+@router.get("/logs/containers")
+async def log_containers(_=Depends(get_current_user)) -> dict:
+    return {"containers": list_containers()}
+
+
+@router.get("/logs")
+async def container_logs(
+    service: str = Query(..., description="Docker container name"),
+    tail: int = Query(DEFAULT_LOG_TAIL, ge=10, le=MAX_LOG_TAIL),
+    since_minutes: int = Query(60, ge=5, le=1440),
+    grep: Optional[str] = Query(None, max_length=80),
+    _=Depends(get_current_user),
+) -> dict:
+    return fetch_container_logs(
+        service,
+        tail=tail,
+        since_minutes=since_minutes,
+        grep=grep,
+    )
