@@ -1,0 +1,33 @@
+# Trangotech Services Knowledge Base
+
+## Company Overview
+Trangotech is a full-service website and software consultancy helping businesses grow online.
+
+## Services
+- Custom website design and development (WordPress, React, Next.js, Webflow)
+- E-commerce solutions (Shopify, WooCommerce, custom platforms)
+- Web applications and SaaS development
+- UI/UX design and branding
+- SEO and digital marketing integration
+- Website maintenance and support packages
+- Mobile app development (iOS, Android, React Native)
+- API integrations and third-party service connections
+
+## Pricing (approximate)
+- Basic business website: $1,500–$5,000
+- E-commerce store: $3,000–$15,000
+- Custom web app: $10,000–$50,000+
+- Monthly maintenance: $150–$500/month
+- Free consultation call available before any quote
+
+## Process
+1. Discovery call to understand business needs
+2. Proposal with scope and timeline
+3. Design mockups for approval
+4. Development in sprints with weekly updates
+5. QA testing and launch
+6. Optional ongoing maintenance
+
+## Contact
+Sales team follows up within 24 hours after lead capture.
+Email: sales@trangotech.example.com

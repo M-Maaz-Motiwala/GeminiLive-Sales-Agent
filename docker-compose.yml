@@ -1,0 +1,205 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: aura_postgres
+    environment:
+      POSTGRES_USER: aura
+      POSTGRES_PASSWORD: aura_secret
+      POSTGRES_DB: aura_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aura -d aura_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: aura_redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  platform:
+    build:
+      context: ./eplanet-calling-agent/gemini-sales-agent
+      dockerfile: backend/Dockerfile
+    container_name: aura_platform
+    env_file:
+      - .env
+      - .host.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://aura:aura_secret@postgres:5432/aura_db
+      REDIS_URL: redis://redis:6379/0
+      BRIDGE_URL: http://bridge:8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - default
+      - voip
+    volumes:
+      - uploads_data:/app/uploads
+      - ./asterisk/generated:/app/asterisk/generated
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  platform_init:
+    build:
+      context: ./eplanet-calling-agent/gemini-sales-agent
+      dockerfile: backend/Dockerfile
+    container_name: aura_platform_init
+    env_file:
+      - .env
+      - .host.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://aura:aura_secret@postgres:5432/aura_db
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - uploads_data:/app/uploads
+      - ./asterisk/generated:/app/asterisk/generated
+    depends_on:
+      platform:
+        condition: service_healthy
+    command:
+      - python
+      - -m
+      - backend.scripts.bootstrap
+    restart: "no"
+
+  celery_worker:
+    build:
+      context: ./eplanet-calling-agent/gemini-sales-agent
+      dockerfile: backend/Dockerfile
+    container_name: aura_celery
+    command: celery -A backend.celery_app worker --loglevel=info
+    env_file:
+      - .env
+      - .host.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://aura:aura_secret@postgres:5432/aura_db
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - uploads_data:/app/uploads
+      - ./asterisk/generated:/app/asterisk/generated
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./eplanet-calling-agent/gemini-sales-agent/frontend
+    container_name: aura_frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      platform:
+        condition: service_healthy
+    restart: unless-stopped
+
+  asterisk:
+    image: andrius/asterisk:22
+    container_name: asterisk
+    entrypoint: ["/bin/sh", "/templates/entrypoint-wrap.sh"]
+    command: ["/usr/sbin/asterisk", "-vvvdddf", "-T", "-W", "-U", "asterisk", "-p"]
+    env_file:
+      - .env
+      - .host.env
+    environment:
+      - EXTERNAL_IP=${EXTERNAL_IP:-}
+      - DIDWW_SIP_USER=${DIDWW_SIP_USER:-}
+      - DIDWW_SIP_SECRET=${DIDWW_SIP_SECRET:-}
+      - DIDWW_FROM_DOMAIN=${DIDWW_FROM_DOMAIN:-}
+    volumes:
+      - ./asterisk/entrypoint-wrap.sh:/templates/entrypoint-wrap.sh:ro
+      - ./asterisk/pjsip.conf.template:/templates/pjsip.conf.template:ro
+      - ./asterisk/rtp.conf.template:/templates/rtp.conf.template:ro
+      - ./.host.env:/run/host.env:ro
+      - ./asterisk/asterisk.conf:/etc/asterisk/asterisk.conf:ro
+      - ./asterisk/modules.conf:/etc/asterisk/modules.conf:ro
+      - ./asterisk/http.conf:/etc/asterisk/http.conf:ro
+      - ./asterisk/ari.conf:/etc/asterisk/ari.conf:ro
+      - ./asterisk/extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ./asterisk/generated:/etc/asterisk/generated
+      - ./asterisk/logger.conf:/etc/asterisk/logger.conf:ro
+    ports:
+      - "8088:8088"
+      # host mode on SIP preserves the phone's real source IP in REGISTER (not 172.19.0.1).
+      - target: 5060
+        published: 5060
+        protocol: udp
+        mode: host
+      - "10000-10050:10000-10050/udp"
+    networks:
+      - voip
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "asterisk -rx 'core show version' 2>/dev/null | grep -q Asterisk"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+
+  bridge:
+    build: ./bridge
+    container_name: gemini_bridge
+    env_file:
+      - .env
+      - .host.env
+    environment:
+      PLATFORM_URL: http://platform:8000
+      MAX_CONCURRENT_CALLS: ${MAX_CONCURRENT_CALLS:-5}
+      RTP_PORT_BASE: ${RTP_PORT_BASE:-40000}
+      RTP_PORT_COUNT: ${RTP_PORT_COUNT:-50}
+    depends_on:
+      asterisk:
+        condition: service_healthy
+      platform:
+        condition: service_healthy
+    networks:
+      - voip
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',8000)); sys.exit(0)"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+networks:
+  voip:
+    driver: bridge
+  default:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  uploads_data:

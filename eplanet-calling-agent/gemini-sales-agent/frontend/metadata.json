@@ -1,0 +1,5 @@
+{
+  "name": "Gemini Sales Agent",
+  "description": "A real-time speech-to-speech sales agent powered by Gemini Live API.",
+  "requestFramePermissions": ["microphone"]
+}
