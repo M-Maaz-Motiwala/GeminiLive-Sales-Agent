@@ -10,44 +10,49 @@ const CRM_TOOLS = ['create_lead', 'search_contacts', 'create_note', 'update_lead
 const RAG_TOOLS = ['search_knowledge_base'];
 const SEARCH_TOOLS = ['google_search'];
 const VOICES = [
-  { name: 'Zephyr', style: 'Bright' },
-  { name: 'Puck', style: 'Upbeat' },
-  { name: 'Charon', style: 'Informative' },
-  { name: 'Kore', style: 'Firm' },
-  { name: 'Fenrir', style: 'Excitable' },
-  { name: 'Leda', style: 'Youthful' },
-  { name: 'Orus', style: 'Firm' },
-  { name: 'Aoede', style: 'Breezy' },
-  { name: 'Callirrhoe', style: 'Easy-going' },
-  { name: 'Autonoe', style: 'Bright' },
-  { name: 'Enceladus', style: 'Breathy' },
-  { name: 'Iapetus', style: 'Clear' },
-  { name: 'Umbriel', style: 'Easy-going' },
-  { name: 'Algieba', style: 'Smooth' },
-  { name: 'Despina', style: 'Smooth' },
-  { name: 'Erinome', style: 'Clear' },
-  { name: 'Algenib', style: 'Gravelly' },
-  { name: 'Rasalgethi', style: 'Informative' },
-  { name: 'Laomedeia', style: 'Upbeat' },
-  { name: 'Achernar', style: 'Soft' },
-  { name: 'Alnilam', style: 'Firm' },
-  { name: 'Schedar', style: 'Even' },
-  { name: 'Gacrux', style: 'Mature' },
-  { name: 'Pulcherrima', style: 'Forward' },
-  { name: 'Achird', style: 'Friendly' },
-  { name: 'Zubenelgenubi', style: 'Casual' },
-  { name: 'Vindemiatrix', style: 'Gentle' },
-  { name: 'Sadachbia', style: 'Lively' },
-  { name: 'Sadaltager', style: 'Knowledgeable' },
-  { name: 'Sulafat', style: 'Warm' },
+  { name: 'Zephyr', style: 'Bright', gender: 'female' },
+  { name: 'Puck', style: 'Upbeat', gender: 'male' },
+  { name: 'Charon', style: 'Informative', gender: 'male' },
+  { name: 'Kore', style: 'Firm', gender: 'female' },
+  { name: 'Fenrir', style: 'Excitable', gender: 'male' },
+  { name: 'Leda', style: 'Youthful', gender: 'female' },
+  { name: 'Orus', style: 'Firm', gender: 'male' },
+  { name: 'Aoede', style: 'Breezy', gender: 'female' },
+  { name: 'Callirrhoe', style: 'Easy-going', gender: 'female' },
+  { name: 'Autonoe', style: 'Bright', gender: 'female' },
+  { name: 'Enceladus', style: 'Breathy', gender: 'male' },
+  { name: 'Iapetus', style: 'Clear', gender: 'male' },
+  { name: 'Algieba', style: 'Smooth', gender: 'male' },
+  { name: 'Despina', style: 'Smooth', gender: 'female' },
+  { name: 'Erinome', style: 'Clear', gender: 'female' },
+  { name: 'Algenib', style: 'Gravelly', gender: 'male' },
+  { name: 'Rasalgethi', style: 'Informative', gender: 'male' },
+  { name: 'Laomedeia', style: 'Upbeat', gender: 'female' },
+  { name: 'Achernar', style: 'Soft', gender: 'female' },
+  { name: 'Alnilam', style: 'Firm', gender: 'male' },
+  { name: 'Schedar', style: 'Even', gender: 'male' },
+  { name: 'Gacrux', style: 'Mature', gender: 'female' },
+  { name: 'Pulcherrima', style: 'Forward', gender: 'female' },
+  { name: 'Achird', style: 'Friendly', gender: 'male' },
+  { name: 'Zubenelgenubi', style: 'Casual', gender: 'male' },
+  { name: 'Vindemiatrix', style: 'Gentle', gender: 'female' },
+  { name: 'Sadachbia', style: 'Lively', gender: 'male' },
+  { name: 'Sadaltager', style: 'Knowledgeable', gender: 'male' },
+  { name: 'Sulafat', style: 'Warm', gender: 'female' },
+  { name: 'Arcas', style: 'Specialty', gender: 'male' },
 ];
 const MODELS = ['gemini-3.1-flash-live-preview', 'gemini-2.5-flash-native-audio-preview-12-2025'];
+
+const getVoiceOptions = (gender: string) => VOICES.filter(v => v.gender === gender);
+
+const getDefaultVoiceForGender = (gender: string) => getVoiceOptions(gender)[0]?.name || VOICES[0]?.name || 'Zephyr';
 
 const EMPTY = {
   name: '',
   organization_id: '',
   type: 'sales',
   voice: 'Zephyr',
+  voice_gender: 'female',
   model: 'gemini-3.1-flash-live-preview',
   enabled_tools: [] as string[],
   is_active: true,
@@ -69,6 +74,7 @@ export default function Agents() {
   const [error, setError] = useState('');
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   const [loadError, setLoadError] = useState('');
+  const voiceOptions = getVoiceOptions(form.voice_gender);
 
   const load = async () => {
     setLoadError('');
@@ -119,6 +125,20 @@ export default function Agents() {
     }));
   };
 
+  const updateVoiceGender = (voiceGender: string) => {
+    setForm(f => {
+      const nextVoiceOptions = getVoiceOptions(voiceGender);
+      const nextVoice = nextVoiceOptions.some(v => v.name === f.voice)
+        ? f.voice
+        : nextVoiceOptions[0]?.name || f.voice;
+      return {
+        ...f,
+        voice_gender: voiceGender,
+        voice: nextVoice,
+      };
+    });
+  };
+
   return (
     <div className="p-6 lg:p-10">
       <PageHeader
@@ -151,7 +171,7 @@ export default function Agents() {
                 {a.did && <Badge variant="default">DID {a.did}</Badge>}
               </div>
               <p className="text-xs text-zinc-500 mt-1">
-                {a.type} · {a.voice} · {a.enabled_tools?.length || 0} tools · {a.document_count || 0} agent KB docs
+                {a.type} · {a.voice} ({a.voice_gender}) · {a.enabled_tools?.length || 0} tools · {a.document_count || 0} agent KB docs
               </p>
               <p className="text-xs text-orange-400/80 mt-2 flex items-center gap-1">
                 <PhoneOutgoing className="w-3 h-3" />
@@ -176,6 +196,7 @@ export default function Agents() {
                   organization_id: a.organization_id ? String(a.organization_id) : '',
                   type: 'sales',
                   voice: a.voice,
+                  voice_gender: a.voice_gender || 'female',
                   model: a.model,
                   enabled_tools: a.enabled_tools || [],
                   is_active: a.is_active,
@@ -218,11 +239,20 @@ export default function Agents() {
             </Field>
             <Field label="Voice">
               <select className={selectCls} value={form.voice} onChange={e => setForm(f => ({ ...f, voice: e.target.value }))}>
-                {VOICES.map(v => (
+                {voiceOptions.map(v => (
                   <option key={v.name} value={v.name}>
                     {v.name} - {v.style}{v.name === 'Sulafat' ? ' (most human-like)' : ''}
                   </option>
                 ))}
+              </select>
+              <p className="text-xs text-zinc-500 mt-1">
+                Showing {form.voice_gender === 'male' ? 'male' : 'female'} voices only.
+              </p>
+            </Field>
+            <Field label="Voice Gender">
+              <select className={selectCls} value={form.voice_gender} onChange={e => updateVoiceGender(e.target.value)}>
+                <option value="female">Female</option>
+                <option value="male">Male</option>
               </select>
             </Field>
             <Field label="Model"><select className={selectCls} value={form.model} onChange={e => setForm(f => ({ ...f, model: e.target.value }))}>{MODELS.map(m => <option key={m} value={m}>{m}</option>)}</select></Field>

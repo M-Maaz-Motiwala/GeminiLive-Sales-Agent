@@ -143,11 +143,11 @@ SALES_TOOLS = [
 ]
 
 FLEET = [
-    ("Maya", "sales-maya", "Zephyr"),
-    ("Jordan", "sales-jordan", "Kore"),
-    ("Morgan", "sales-morgan", "Aoede"),
-    ("Casey", "sales-casey", "Puck"),
-    ("Riley", "sales-riley", "Charon"),
+    ("Maya", "sales-maya", "Zephyr", "female"),
+    ("Jordan", "sales-jordan", "Kore", "female"),
+    ("Morgan", "sales-morgan", "Aoede", "female"),
+    ("Casey", "sales-casey", "Leda", "female"),
+    ("Riley", "sales-riley", "Charon", "male"),
 ]
 
 LEGACY_SLUGS = (
@@ -174,7 +174,7 @@ async def seed_agents() -> None:
                 legacy.inbound_extension = None
                 print(f"Deactivated legacy agent {slug}")
 
-        for display, slug, voice in FLEET:
+        for display, slug, voice, voice_gender in FLEET:
             inbound = INBOUND_SALES_PROMPT.format(name=display)
             outbound = OUTBOUND_SALES_PROMPT.format(name=display)
             spec = {
@@ -185,6 +185,7 @@ async def seed_agents() -> None:
                 "did": org.did,
                 "inbound_extension": None,
                 "voice": voice,
+                "voice_gender": voice_gender,
                 "inbound_prompt_template": inbound,
                 "outbound_prompt_template": outbound,
                 "system_prompt_template": inbound,
