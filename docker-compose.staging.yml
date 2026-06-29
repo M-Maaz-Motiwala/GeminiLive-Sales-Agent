@@ -1,0 +1,42 @@
+name: aura_staging
+
+services:
+  postgres:
+    container_name: aura_staging_postgres
+
+  redis:
+    container_name: aura_staging_redis
+
+  platform:
+    container_name: aura_staging_platform
+    ports:
+      - "8001:8000"
+
+  platform_init:
+    container_name: aura_staging_platform_init
+
+  celery_worker:
+    container_name: aura_staging_celery
+
+  frontend:
+    container_name: aura_staging_frontend
+    ports:
+      - "8081:80"
+
+  asterisk:
+    container_name: aura_staging_asterisk
+    environment:
+      SIP_PORT: "5061"
+      ASTERISK_RTP_START: "10060"
+      ASTERISK_RTP_END: "10110"
+    ports:
+      - "8089:8088"
+      # Staging cannot share host SIP/RTP ports with production on the same server.
+      - target: 5060
+        published: 5061
+        protocol: udp
+        mode: host
+      - "10060-10110:10060-10110/udp"
+
+  bridge:
+    container_name: aura_staging_bridge

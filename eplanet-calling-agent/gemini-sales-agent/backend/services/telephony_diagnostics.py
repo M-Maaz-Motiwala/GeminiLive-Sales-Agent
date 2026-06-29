@@ -13,20 +13,51 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-ASTERISK_CONTAINER = os.getenv("ASTERISK_CONTAINER_NAME", "asterisk")
-BRIDGE_CONTAINER = os.getenv("BRIDGE_CONTAINER_NAME", "gemini_bridge")
+def _get_default_container_names() -> tuple[str, str]:
+    app_env = os.getenv("APP_ENV", "local")
+    if app_env == "staging":
+        return "aura_staging_asterisk", "aura_staging_bridge"
+    elif app_env == "prod":
+        return "aura_prod_asterisk", "aura_prod_bridge"
+    else:
+        return "asterisk", "gemini_bridge"
 
-ALLOWED_LOG_CONTAINERS = frozenset(
-    {
-        "asterisk",
-        "gemini_bridge",
-        "aura_platform",
-        "aura_frontend",
-        "aura_celery",
-        "aura_postgres",
-        "aura_redis",
-    }
-)
+_default_asterisk, _default_bridge = _get_default_container_names()
+ASTERISK_CONTAINER = os.getenv("ASTERISK_CONTAINER_NAME", _default_asterisk)
+BRIDGE_CONTAINER = os.getenv("BRIDGE_CONTAINER_NAME", _default_bridge)
+
+def get_allowed_log_containers() -> frozenset[str]:
+    app_env = os.getenv("APP_ENV", "local")
+    if app_env == "staging":
+        return frozenset({
+            "aura_staging_asterisk",
+            "aura_staging_bridge",
+            "aura_staging_platform",
+            "aura_staging_frontend",
+            "aura_staging_celery",
+            "aura_staging_postgres",
+            "aura_staging_redis",
+        })
+    elif app_env == "prod":
+        return frozenset({
+            "aura_prod_asterisk",
+            "aura_prod_bridge",
+            "aura_prod_platform",
+            "aura_prod_frontend",
+            "aura_prod_celery",
+            "aura_prod_postgres",
+            "aura_prod_redis",
+        })
+    else:
+        return frozenset({
+            "asterisk",
+            "gemini_bridge",
+            "aura_platform",
+            "aura_frontend",
+            "aura_celery",
+            "aura_postgres",
+            "aura_redis",
+        })
 
 MAX_LOG_TAIL = 500
 DEFAULT_LOG_TAIL = 200
@@ -120,15 +151,16 @@ def list_containers() -> list[dict[str, str]]:
     )
     if not result.get("ok"):
         return []
+    allowed = get_allowed_log_containers()
     rows: list[dict[str, str]] = []
     for line in (result.get("stdout") or "").splitlines():
         parts = line.split("\t", 2)
         if len(parts) != 3:
             continue
         name, status, state = parts
-        if name in ALLOWED_LOG_CONTAINERS:
+        if name in allowed:
             rows.append({"name": name, "status": status, "state": state})
-    order = list(ALLOWED_LOG_CONTAINERS)
+    order = list(allowed)
     rows.sort(key=lambda r: order.index(r["name"]) if r["name"] in order else 99)
     return rows
 
@@ -140,7 +172,7 @@ def fetch_container_logs(
     since_minutes: int = 60,
     grep: Optional[str] = None,
 ) -> dict[str, Any]:
-    if container not in ALLOWED_LOG_CONTAINERS:
+    if container not in get_allowed_log_containers():
         return {"ok": False, "error": f"container not allowed: {container}"}
     tail = max(10, min(int(tail), MAX_LOG_TAIL))
     since_minutes = max(5, min(int(since_minutes), 24 * 60))
@@ -270,21 +302,30 @@ def run_telephony_diagnostics() -> dict[str, Any]:
             docker_ok,
             "Platform can reach Docker (log viewer & Asterisk checks)"
             if docker_ok
-            else "Docker socket unavailable — install docker CLI and mount /var/run/docker.sock",
+            else "Docker socket unavailable — docker CLI missing or /var/run/docker.sock not mounted",
             owner="platform",
-            hint="Ensure docker-compose mounts /var/run/docker.sock on aura_platform and rebuild.",
+            hint="Rebuild the platform container (docker CLI is now bundled) and ensure "
+            "docker-compose mounts /var/run/docker.sock on the platform service.",
         )
     )
 
     containers = list_containers()
-    required = {"asterisk", "gemini_bridge", "aura_platform"}
+    required = {ASTERISK_CONTAINER, BRIDGE_CONTAINER}
+    # Derive platform container name from the active environment
+    _app_env = os.getenv("APP_ENV", "local")
+    if _app_env == "staging":
+        required.add("aura_staging_platform")
+    elif _app_env == "prod":
+        required.add("aura_prod_platform")
+    else:
+        required.add("aura_platform")
     running = {c["name"] for c in containers if c.get("state") == "running"}
     missing = sorted(required - running)
     checks.append(
         _check(
             "core_containers",
             not missing,
-            "Core containers running: asterisk, gemini_bridge, aura_platform"
+            f"Core containers running: {', '.join(sorted(required))}"
             if not missing
             else f"Not running: {', '.join(missing)}",
             owner="platform",

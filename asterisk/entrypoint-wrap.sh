@@ -14,10 +14,16 @@ done
 DIDWW_USER="${DIDWW_SIP_USER:-86vbvm130t}"
 DIDWW_PASS="${DIDWW_SIP_SECRET:-}"
 DIDWW_FROM_DOMAIN="${DIDWW_FROM_DOMAIN:-out.didww.com}"
+ASTERISK_RTP_START="${ASTERISK_RTP_START:-10000}"
+ASTERISK_RTP_END="${ASTERISK_RTP_END:-10050}"
 
 if [ -n "${EXTERNAL_IP}" ]; then
   PJSIP_NAT="external_media_address=${EXTERNAL_IP}
 external_signaling_address=${EXTERNAL_IP}"
+  if [ -n "${SIP_PORT:-}" ] && [ "${SIP_PORT}" != "5060" ]; then
+    PJSIP_NAT="${PJSIP_NAT}
+external_signaling_port=${SIP_PORT}"
+  fi
   RTP_NAT="externaddr=${EXTERNAL_IP}"
   MEDIA_LINE="media_address=${EXTERNAL_IP}"
 else
@@ -63,7 +69,9 @@ else
   echo "asterisk-entrypoint: DIDWW outbound auth user=${DIDWW_USER}" >&2
 fi
 
-awk -v rtp="$RTP_NAT" '
+awk -v rtp="$RTP_NAT" -v rtp_start="$ASTERISK_RTP_START" -v rtp_end="$ASTERISK_RTP_END" '
+  /@ASTERISK_RTP_START@/ { sub(/@ASTERISK_RTP_START@/, rtp_start) }
+  /@ASTERISK_RTP_END@/ { sub(/@ASTERISK_RTP_END@/, rtp_end) }
   /@EXTERNADDR_LINE@/ { print rtp; next }
   { print }
 ' /templates/rtp.conf.template > /etc/asterisk/rtp.conf

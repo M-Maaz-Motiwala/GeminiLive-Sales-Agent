@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # Write .host.env with LAN IP + SIP settings for Zoiper (phones on same Wi-Fi).
-# Reads defaults/overrides from .env; auto-detects IP when EXTERNAL_IP=auto or unset.
+# Reads defaults/overrides from APP_ENV_FILE; auto-detects IP when EXTERNAL_IP=auto or unset.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ENV_FILE="$ROOT/.env"
-HOST_ENV="$ROOT/.host.env"
+ENV_FILE="${APP_ENV_FILE:-.env}"
+case "$ENV_FILE" in
+  /*) ;;
+  *) ENV_FILE="$ROOT/$ENV_FILE" ;;
+esac
+HOST_ENV_NAME=".host.${DEPLOY_ENV:-local}.env"
+HOST_ENV="$ROOT/$HOST_ENV_NAME"
 
 read_env() {
   local key="$1"
@@ -106,7 +111,17 @@ if [ "$IP" = "127.0.0.1" ] || [ "$IP" = "localhost" ]; then
   echo "         Zoiper SIP server should match EXTERNAL_IP (not 127.0.0.1 for long calls)." >&2
 fi
 
-SIP_PORT=$(read_env SIP_PORT "5060")
+case "${DEPLOY_ENV:-local}" in
+  staging)
+    SIP_PORT=$(read_env STAGING_SIP_PORT "${DEFAULT_SIP_PORT:-5061}")
+    ;;
+  prod)
+    SIP_PORT=$(read_env PROD_SIP_PORT "$(read_env SIP_PORT "${DEFAULT_SIP_PORT:-5060}")")
+    ;;
+  *)
+    SIP_PORT=$(read_env SIP_PORT "${DEFAULT_SIP_PORT:-5060}")
+    ;;
+esac
 SIP_USER=$(read_env SIP_USER "1000")
 SIP_PASS=$(read_env SIP_PASS "1000pass")
 LAB_EXTS=(1001 1002 1003 1004 1005 1006 1007 1008 1009 1010)

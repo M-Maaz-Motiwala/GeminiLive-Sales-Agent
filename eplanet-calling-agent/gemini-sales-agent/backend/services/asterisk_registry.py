@@ -13,7 +13,15 @@ ASTERISK_GENERATED_DIR = Path(
     os.getenv("ASTERISK_GENERATED_DIR", "/app/asterisk/generated")
 )
 ORG_DIDS_CONF = "org-dids.conf"
-ASTERISK_CONTAINER = os.getenv("ASTERISK_CONTAINER_NAME", "asterisk")
+def _default_asterisk_container() -> str:
+    app_env = os.getenv("APP_ENV", "local")
+    if app_env == "staging":
+        return "aura_staging_asterisk"
+    elif app_env == "prod":
+        return "aura_prod_asterisk"
+    return "asterisk"
+
+ASTERISK_CONTAINER = os.getenv("ASTERISK_CONTAINER_NAME", _default_asterisk_container())
 
 
 def _did_exten_variants(did: str) -> list[str]:
