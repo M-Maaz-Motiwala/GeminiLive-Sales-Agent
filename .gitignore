@@ -3,9 +3,6 @@
 # =============================================================================
 
 # --- Secrets & local runtime (never commit) ---
-.env
-.env.prod
-.env.staging
 .env.local
 .env.*.local
 .env.development.local
