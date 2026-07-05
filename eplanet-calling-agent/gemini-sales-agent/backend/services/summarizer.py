@@ -31,6 +31,11 @@ _SUMMARY_PROMPTS: dict[str, str] = {
         "Write 3-4 concise sentences covering: the issue or question, what was explained, "
         "whether it was resolved, and any escalation or follow-up needed."
     ),
+    AgentType.outbound_sales.value: (
+        "You are summarizing an outbound cold call. "
+        "Write 3-4 concise sentences covering: prospect reaction, interest level, "
+        "whether a callback was booked or lead captured, and recommended follow-up."
+    ),
     "default": (
         "You are a professional note-taker. Summarize the conversation into "
         "2-4 concise sentences capturing key points and outcomes."
@@ -41,6 +46,7 @@ _AGENT_OUTPUT_TYPES: dict[str, list[str]] = {
     AgentType.lead_qualification.value: ["lead_capture", "action_items"],
     AgentType.sales.value: ["action_items"],
     AgentType.document_qa.value: ["action_items"],
+    AgentType.outbound_sales.value: ["call_disposition", "lead_capture", "action_items"],
 }
 
 
@@ -76,9 +82,13 @@ def _agent_type_key(agent_type: Any) -> str:
     return str(agent_type)
 
 
-def output_types_for_agent(agent_type: Any) -> list[str]:
+def output_types_for_agent(agent_type: Any, *, direction: str | None = None) -> list[str]:
     key = _agent_type_key(agent_type)
     types_list = list(_AGENT_OUTPUT_TYPES.get(key, []))
+    if direction == "outbound" and key == AgentType.sales.value:
+        for extra in ("call_disposition", "lead_capture"):
+            if extra not in types_list:
+                types_list.append(extra)
     if "summary" not in types_list:
         types_list.insert(0, "summary")
     return types_list
@@ -134,12 +144,22 @@ async def generate_output(
     prompts = {
         "lead_capture": (
             "Extract lead information from this conversation as JSON with keys: "
-            "name, email, phone, company, interest_level (1-10), key_needs (array of strings), "
+            "name, email, phone, company, industry, service_required, budget, timeline, "
+            "preferred_meeting_time, requirement, recommended_service_package, "
+            "key_features (array of strings), decision_maker_status, "
+            "objections_concerns (array of strings), lead_temperature, "
+            "recommended_next_step, interest_level (1-10), key_needs (array of strings), "
             "notes (short string). Return ONLY valid JSON."
         ),
         "action_items": (
             "List follow-ups from this conversation as JSON with key: "
             "items (array of {task, owner, priority, due_date}). Return ONLY valid JSON."
+        ),
+        "call_disposition": (
+            "Classify this outbound call as JSON with keys: "
+            "disposition (interested|callback_booked|not_interested|no_answer|wrong_number|do_not_call|voicemail), "
+            "interest_level (1-10), callback_requested (boolean), lead_captured (boolean), "
+            "objections (array of strings), notes (short string). Return ONLY valid JSON."
         ),
         "research_report": (
             "Compile a structured research report as JSON with keys: "

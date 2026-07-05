@@ -1,12 +1,25 @@
 import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
 
-interface AuthUser { id: number; email: string; full_name: string; role: string; }
+interface AuthUser {
+  id: number;
+  email: string;
+  full_name: string;
+  role: string;
+  is_approved: boolean;
+  auth_provider: string;
+  google_picture?: string;
+  organization_id?: number;
+  designation?: string;
+}
 
 interface AuthContextType {
   user: AuthUser | null;
   token: string | null;
   login: (email: string, password: string) => Promise<void>;
+  googleLogin: () => void;
   logout: () => void;
+  refreshUser: () => Promise<void>;
+  setSession: (accessToken: string, refreshToken?: string) => Promise<void>;
   isAuthenticated: boolean;
 }
 
@@ -23,6 +36,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     localStorage.removeItem('aura_token');
+    localStorage.removeItem('aura_refresh_token');
     localStorage.removeItem('aura_user');
     setToken(null);
     setUser(null);
@@ -64,12 +78,64 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     localStorage.setItem('aura_token', data.access_token);
     localStorage.setItem('aura_user', JSON.stringify(me));
+    if (data.refresh_token) {
+      localStorage.setItem('aura_refresh_token', data.refresh_token);
+    }
     setToken(data.access_token);
     setUser(me);
   }, []);
 
+  const googleLogin = useCallback(() => {
+    window.location.href = `${API_BASE}/api/auth/google`;
+  }, []);
+
+  const refreshUser = useCallback(async () => {
+    // Always read the latest token from localStorage — setSession may have just
+    // written it without the closure seeing the new state value yet.
+    const currentToken = localStorage.getItem('aura_token');
+    if (!currentToken) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${currentToken}` }
+      });
+      if (res.ok) {
+        const me = await res.json();
+        setUser(me);
+        localStorage.setItem('aura_user', JSON.stringify(me));
+        setToken(currentToken);
+      }
+    } catch (e) {
+      console.error("Failed to refresh user:", e);
+    }
+  }, []);
+
+  /**
+   * Set tokens directly into React state + localStorage, then fetch /me.
+   * Used by the Google OAuth callback page so ProtectedRoute sees the session
+   * immediately without requiring a page reload.
+   */
+  const setSession = useCallback(async (accessToken: string, refreshToken?: string) => {
+    localStorage.setItem('aura_token', accessToken);
+    if (refreshToken) {
+      localStorage.setItem('aura_refresh_token', refreshToken);
+    }
+    setToken(accessToken);
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (res.ok) {
+        const me = await res.json();
+        setUser(me);
+        localStorage.setItem('aura_user', JSON.stringify(me));
+      }
+    } catch (e) {
+      console.error("Failed to fetch user after setSession:", e);
+    }
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, isAuthenticated: !!token }}>
+    <AuthContext.Provider value={{ user, token, login, googleLogin, logout, refreshUser, setSession, isAuthenticated: !!token }}>
       {children}
     </AuthContext.Provider>
   );

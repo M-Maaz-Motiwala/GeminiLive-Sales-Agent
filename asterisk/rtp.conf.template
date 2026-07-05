@@ -1,8 +1,7 @@
 [general]
-rtpstart=10000
-rtpend=10050
+rtpstart=@ASTERISK_RTP_START@
+rtpend=@ASTERISK_RTP_END@
 strictrtp=no
 ; Match pjsip.conf.template — do not mark Wi-Fi phones as localnet.
 localnet=127.0.0.0/8
-localnet=172.19.0.0/16
 @EXTERNADDR_LINE@

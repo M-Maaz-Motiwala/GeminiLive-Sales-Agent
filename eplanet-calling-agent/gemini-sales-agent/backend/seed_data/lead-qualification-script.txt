@@ -18,6 +18,7 @@ First-call intake for new prospects. Collect required information and save as a 
 - Timeline: "When are you hoping to get started?"
 
 ## After Collecting Info
+Repeat or spell back name, email, company name, and phone number; get explicit confirmation before saving.
 Use the create_lead tool to save: name, email, company, notes about their needs.
 Confirm you have saved their information and that the sales team will follow up within 24 hours.
 

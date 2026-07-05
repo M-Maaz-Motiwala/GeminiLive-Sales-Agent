@@ -3,12 +3,12 @@
 # =============================================================================
 
 # --- Secrets & local runtime (never commit) ---
-.env
 .env.local
 .env.*.local
 .env.development.local
 .env.production.local
 .host.env
+.host.*.env
 *.pem
 *.key
 *.p12
@@ -103,7 +103,6 @@ data/
 postgres_data/
 *.sql.gz
 docker-compose.override.yml
-docker-compose.local.yml
 
 # --- IDE & editors ---
 .idea/
@@ -152,6 +151,8 @@ playwright/.cache/
 
 # --- Asterisk / telephony runtime (if generated locally) ---
 asterisk/logs/
+asterisk/generated/
+asterisk/generated_*/
 *.call
 
 # --- Misc ---

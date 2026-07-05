@@ -1,36 +1,38 @@
+ENV ?= local
+
 .PHONY: up down restart logs check ps rebuild bootstrap refresh-ip
 
 refresh-ip:
-	@./scripts/refresh-ip.sh
+	@./scripts/refresh-ip.sh $(ENV)
 
 up:
-	@./start.sh up -d --build
+	@./start.sh $(ENV) up -d --build
 	@sleep 8
-	@./scripts/check.sh
+	@./scripts/check.sh $(ENV)
 
 down:
-	@./start.sh down
+	@./start.sh $(ENV) down
 
 restart:
-	@./start.sh down
-	@./start.sh up -d --build
+	@./start.sh $(ENV) down
+	@./start.sh $(ENV) up -d --build
 	@sleep 8
-	@./scripts/check.sh
+	@./scripts/check.sh $(ENV)
 
 logs:
-	docker logs -f gemini_bridge
+	@./start.sh $(ENV) logs -f bridge
 
 logs-platform:
-	docker logs -f aura_platform
+	@./start.sh $(ENV) logs -f platform
 
 check:
-	@./scripts/check.sh
+	@./scripts/check.sh $(ENV)
 
 bootstrap:
-	@./start.sh run --rm platform_init
+	@./start.sh $(ENV) run --rm platform_init
 
 ps:
-	@docker ps --filter name=aura_ --filter name=gemini_bridge --filter name=asterisk
+	@./start.sh $(ENV) ps
 
 rebuild:
-	@./start.sh up -d --build
+	@./start.sh $(ENV) up -d --build

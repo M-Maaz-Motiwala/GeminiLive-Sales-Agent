@@ -13,13 +13,14 @@ Full-stack **AI phone agent** for LAN testing: register Zoiper on your Wi‑Fi, 
 5. [Environment variables](#environment-variables)
 6. [Zoiper / SIP setup](#zoiper--sip-setup-call-from-your-phone)
 7. [What to dial](#what-to-dial)
-8. [Admin UI walkthrough](#admin-ui-walkthrough)
-9. [How to create an agent](#how-to-create-an-agent)
-10. [AI knowledge base (RAG)](#ai-knowledge-base-rag)
-11. [Project structure](#project-structure)
-12. [Useful commands](#useful-commands)
-13. [Verification checklist](#verification-checklist)
-14. [Troubleshooting](#troubleshooting)
+8. [Outbound calls (lab)](#outbound-calls-lab)
+9. [Admin UI walkthrough](#admin-ui-walkthrough)
+10. [How to create an agent](#how-to-create-an-agent)
+11. [AI knowledge base (RAG)](#ai-knowledge-base-rag)
+12. [Project structure](#project-structure)
+13. [Useful commands](#useful-commands)
+14. [Verification checklist](#verification-checklist)
+15. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -59,11 +60,13 @@ Full-stack **AI phone agent** for LAN testing: register Zoiper on your Wi‑Fi, 
 Zoiper (phone, same Wi-Fi)
     │  SIP UDP 5060
     ▼
-Asterisk (PJSIP + dialplan 701/702/703)
-    │  Stasis(gemini-agent, agent-slug)
+Asterisk (PJSIP + dialplan 701–704)
+    │  Inbound: Stasis(gemini-agent, agent-slug)
+    │  Outbound: ARI originate → Stasis(gemini-agent, slug, outbound)
     ▼
 gemini_bridge (ARI + RTP :40000 + Gemini Live WS)
     │  POST /internal/calls/*  (X-Bridge-Token)
+    │  POST /internal/originate (platform → bridge)
     ▼
 aura_platform (FastAPI :8000)
     ├── PostgreSQL  (agents, sessions, leads, documents)
@@ -117,6 +120,9 @@ Single root **`.env`** for platform, celery, and bridge.
 | PINECONE_INDEX_NAME | Default `aura-knowledge` (auto-created) |
 | PINECONE_ENVIRONMENT | Default `us-east-1` |
 | BRIDGE_INTERNAL_TOKEN | Bridge ↔ platform secret |
+| BRIDGE_URL | Platform → bridge HTTP (`http://bridge:8000` in Docker) |
+| OUTBOUND_LAB_ENDPOINT | Default outbound dial target (`PJSIP/1001`) |
+| OUTBOUND_DEFAULT_CALLER_ID | Caller ID for lab outbound (`1000`) |
 | JWT_SECRET_KEY | Admin JWT |
 | ADMIN_EMAIL / ADMIN_PASSWORD | Bootstrap admin |
 | ARI_* | Must match asterisk/ari.conf |
@@ -129,7 +135,7 @@ LAN IP is auto-detected into **`.host.env`** on each **`./start.sh`** (set `EXTE
 | `EXTERNAL_IP` | `auto` (default) or fixed IPv4 e.g. `172.17.1.130` |
 | `SIP_PORT` | SIP UDP port (default `5060`) |
 | `SIP_USER` / `SIP_PASS` | Extension 1000 credentials |
-| `SIP_USER_1001` / `SIP_PASS_1001` | Extension 1001 credentials |
+| `SIP_USER_100x` / `SIP_PASS_100x` | Lab prospect phones 1001–1010 (default `{ext}pass`) |
 | `SIP_CODEC` | `PCMU` (G.711 μ-law) recommended |
 
 ---
@@ -157,8 +163,86 @@ Tips: use headphones; disable Zoiper echo cancellation for AI calls; dial 600 fo
 | 701 | Maya — Lead Qualifier | Collect lead info, save via CRM |
 | 702 | Aria — Trangotech Sales | Sales + pricing from KB |
 | 703 | Sam — Support FAQ | FAQ from KB only |
+| 704 | Riley — Cold Outbound | Inbound test of outbound agent persona |
 | 700 | First active agent | Legacy fallback |
 | 600 | Echo test | Mic/speaker check |
+
+---
+
+## Outbound calls (lab + CRM)
+
+**Phase 2a** — full outbound CRM on lab SIP. **Phase 2b** — flip `OUTBOUND_MODE=trunk` when SIP provider + DID arrive (no CRM rewrite).
+
+### Flow
+
+```
+Admin → Outbound / Campaigns
+    → POST /api/outbound/dial (or /dial/batch, /campaigns/{id}/dial)
+    → gemini_bridge (multi-call, per-call RTP port)
+    → Asterisk → PJSIP/1001, 1002, …
+    → Stasis → Gemini Live (Riley)
+```
+
+### Lab setup (single or dual phone)
+
+1. Register softphones on same Wi‑Fi (`EXTERNAL_IP`):
+   - **1001–1010** — prospect phones (default password `{ext}pass`, override via `SIP_PASS_100x` in `.env`)
+2. **Outbound Calls** → Riley → **Dial now** (one phone) or batch dial multiple extensions
+3. **Campaigns** → one `PJSIP/100x` per line (e.g. `PJSIP/1001` … `PJSIP/1010`) → **Dial all**
+4. Optional: **Leads** → **Call** (CRM context + DNC / call-window checks)
+5. Review **Sessions** — OUTBOUND badge, `call_disposition`, leads
+
+### Lab softphones (1001–1010)
+
+Extensions **1001 through 1010** are preconfigured in Asterisk. After `./start.sh up -d --force-recreate asterisk`, register each phone in Zoiper:
+
+| Field | Value |
+| ----- | ----- |
+| Username | `1003` (or any 1001–1010) |
+| Password | `{ext}pass` (e.g. `1003pass`) — override in `.env` via `SIP_PASS_1003` |
+| Server | `EXTERNAL_IP` from Dashboard |
+| Port | `5060` UDP |
+
+Dial from CRM with `PJSIP/1003`, batch endpoints, or campaigns (one `PJSIP/100x` per line).
+
+To add **1011+**, copy the 1010 block in `asterisk/pjsip.conf.template` and `extensions.conf`, add `SIP_PASS_1011` to `.env`, and extend the loop in `asterisk/entrypoint-wrap.sh`.
+
+### Trunk mode (when ready)
+
+```env
+OUTBOUND_MODE=trunk
+OUTBOUND_TRUNK_NAME=your_trunk   # Asterisk PJSIP trunk name
+OUTBOUND_TRUNK_CALLER_ID=+15551234567
+```
+
+Configure trunk peer in `asterisk/pjsip.conf` — leads dial as `PJSIP/+E164@your_trunk`.
+
+### Env vars
+
+| Variable | Default | Purpose |
+| -------- | ------- | ------- |
+| `OUTBOUND_MODE` | `lab` | `lab` or `trunk` |
+| `BRIDGE_URL` | `http://bridge:8000` | Platform → bridge |
+| `OUTBOUND_LAB_ENDPOINT` | `PJSIP/1001` | Default lab target |
+| `MAX_CONCURRENT_CALLS` | `5` | Bridge simultaneous calls |
+| `RTP_PORT_BASE` / `COUNT` | `40000` / `50` | Per-call RTP ports |
+| `OUTBOUND_CALL_*` | 9–18 UTC | Call window; disable with `OUTBOUND_CALL_WINDOW_ENABLED=false` |
+
+### API
+
+```bash
+# Single dial
+curl -X POST http://localhost:8000/api/outbound/dial \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"agent_id": 4, "endpoint": "PJSIP/1001"}'
+
+# Batch (two phones)
+curl -X POST http://localhost:8000/api/outbound/dial/batch \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"agent_id": 4, "endpoints": ["PJSIP/1001", "PJSIP/1002"]}'
+```
+
+AMD and large-scale dialer queues are **Phase 2c+**.
 
 ---
 
@@ -167,10 +251,12 @@ Tips: use headphones; disable Zoiper echo cancellation for AI calls; dial 600 fo
 | Page | Purpose |
 | ---- | ------- |
 | Dashboard | Getting started + SIP IP |
-| Agents | Extensions, prompts, tools |
+| Agents | Extensions, prompts, tools (inbound + outbound_sales) |
+| Outbound Calls | Dial / batch dial (1001–1010) |
+| Campaigns | Batch campaigns, parallel lab demo |
 | Documents | Upload KB files per agent |
-| Sessions | Transcripts + auto summaries |
-| Leads | CRM from 701 calls |
+| Sessions | Transcripts + auto summaries (inbound + outbound) |
+| Leads | CRM from calls and agent tools |
 
 API: http://localhost:8000/health  
 SIP info: http://localhost:8000/api/system/info
@@ -208,6 +294,7 @@ Human-like voice behavior is added automatically (master prompt).
 | lead-qualification-script.txt | Maya | 701 |
 | trangotech-services.txt | Aria | 702 |
 | support-faq.txt | Sam | 703 |
+| cold-outbound-script.txt | Riley | 704 (outbound) |
 
 **Pinecone:** Index `aura-knowledge` is auto-created. Bootstrap is idempotent (no duplicate agents/docs).
 
@@ -224,8 +311,8 @@ astrersik/
 ├── start.sh
 ├── Makefile
 ├── scripts/check.sh
-├── asterisk/          # SIP, ARI, extensions 701-703
-├── bridge/app/main.py # Telephony + Gemini + platform client
+├── asterisk/          # SIP, ARI, extensions 701-704
+├── bridge/app/main.py # Telephony + Gemini + originate + platform client
 └── eplanet-calling-agent/gemini-sales-agent/
     ├── backend/       # API, RAG, bootstrap, seed_data/
     └── frontend/      # React admin
@@ -251,11 +338,12 @@ docker logs -f aura_celery
 | ---- | ----- |
 | check.sh | All OK |
 | Login | admin@aura.ai / changeme123 |
-| Agents | 701/702/703 |
-| Documents | 3 seed docs **indexed** |
+| Agents | 701–704 (Riley = outbound) |
+| Documents | 4 seed docs **indexed** |
 | Zoiper | Registered to EXTERNAL_IP |
 | Dial 701 | Lead in Leads page |
-| Sessions | Transcript + summary |
+| Outbound | Admin → Outbound → dial 1001, answer on 1001 Zoiper |
+| Sessions | Transcript + summary + disposition (outbound) |
 
 ---
 
@@ -271,6 +359,6 @@ docker logs -f aura_celery
 
 ---
 
-## Out of scope (v1)
+## Roadmap (not yet implemented)
 
-Browser voice UI, SIP trunk/public DID, outbound dial from admin, multi-concurrent calls.
+Browser voice UI, PSTN/SIP trunk for real numbers, outbound campaigns/dialer, answering-machine detection, multi-concurrent bridge calls.

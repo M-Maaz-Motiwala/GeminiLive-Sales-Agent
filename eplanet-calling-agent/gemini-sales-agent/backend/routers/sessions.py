@@ -8,10 +8,14 @@ from pydantic import BaseModel
 
 from backend.auth.deps import get_current_user
 from backend.db.database import get_db
-from backend.db.models import Session as DBSession, Message, ToolCall, Output, OutputType, Note, SessionStatus
+from backend.db.models import Session as DBSession, Message, ToolCall, Output, OutputType, Note, SessionStatus, Agent, User
 from backend.services import summarizer
 from backend.services.post_call import process_call_end
+from backend.services.session_reconcile import reconcile_stale_bridge_sessions
+from backend.services.session_display import enrich_session_dict
 from backend.services.session_timeline import build_timeline, merge_message_turns
+from backend.services.org_scope import resolve_session_org, session_org_clause
+from backend.services.data_scope import get_scope_filters, can_access_record, clamp_org_param
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -29,9 +33,10 @@ def _session_out(s: DBSession) -> dict:
 async def list_sessions(
     status: Optional[str] = None,
     agent_id: Optional[int] = None,
+    organization_id: Optional[int] = None,
     limit: int = Query(50, le=200),
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     q = (
         select(DBSession)
@@ -39,10 +44,17 @@ async def list_sessions(
         .order_by(DBSession.started_at.desc())
         .limit(limit)
     )
+    # RBAC scoping
+    for f in get_scope_filters(user, DBSession):
+        q = q.where(f)
     if status:
         q = q.where(DBSession.status == status)
     if agent_id:
         q = q.where(DBSession.agent_id == agent_id)
+    organization_id = clamp_org_param(user, organization_id)
+    if organization_id:
+        q = q.where(session_org_clause(organization_id))
+    await reconcile_stale_bridge_sessions(db)
     result = await db.execute(q)
     rows = []
     for s in result.scalars().all():
@@ -54,13 +66,17 @@ async def list_sessions(
                 "slug": s.agent.slug,
                 "inbound_extension": s.agent.inbound_extension,
             }
+        org_id, org_name = await resolve_session_org(db, s)
+        out["organization_id"] = org_id
+        out["organization_name"] = org_name
         out["output_types"] = [o.output_type.value for o in (s.outputs or [])]
+        enrich_session_dict(s, out)
         rows.append(out)
     return rows
 
 
 @router.get("/{session_id}")
-async def get_session(session_id: int, db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
+async def get_session(session_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     result = await db.execute(
         select(DBSession)
         .options(
@@ -74,6 +90,8 @@ async def get_session(session_id: int, db: AsyncSession = Depends(get_db), _=Dep
     s = result.scalar_one_or_none()
     if not s:
         raise HTTPException(404, "Session not found")
+    if not can_access_record(user, s):
+        raise HTTPException(403, "Access denied")
 
     turns = merge_message_turns(s.messages)
     timeline = build_timeline(turns, s.tool_calls, s.outputs)
@@ -88,19 +106,22 @@ async def get_session(session_id: int, db: AsyncSession = Depends(get_db), _=Dep
             "inbound_extension": s.agent.inbound_extension,
         }
 
-    return {
-        **_session_out(s),
-        "agent": agent_info,
-        "turns": turns,
-        "timeline": timeline,
-        "messages": [{"id": m.id, "role": m.role, "text": m.text, "timestamp": m.timestamp} for m in s.messages],
-        "tool_calls": [{"id": tc.id, "tool_name": tc.tool_name, "parameters": tc.parameters, "result": tc.result, "called_at": tc.called_at, "duration_ms": tc.duration_ms} for tc in s.tool_calls],
-        "outputs": [{"id": o.id, "output_type": o.output_type.value, "content": o.content, "created_at": o.created_at} for o in s.outputs],
-    }
+    return enrich_session_dict(
+        s,
+        {
+            **_session_out(s),
+            "agent": agent_info,
+            "turns": turns,
+            "timeline": timeline,
+            "messages": [{"id": m.id, "role": m.role, "text": m.text, "timestamp": m.timestamp} for m in s.messages],
+            "tool_calls": [{"id": tc.id, "tool_name": tc.tool_name, "parameters": tc.parameters, "result": tc.result, "called_at": tc.called_at, "duration_ms": tc.duration_ms} for tc in s.tool_calls],
+            "outputs": [{"id": o.id, "output_type": o.output_type.value, "content": o.content, "created_at": o.created_at} for o in s.outputs],
+        },
+    )
 
 
 @router.post("/{session_id}/summarize")
-async def summarize_session(session_id: int, db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
+async def summarize_session(session_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     result = await db.execute(
         select(DBSession)
         .options(selectinload(DBSession.messages), selectinload(DBSession.agent))
@@ -109,6 +130,8 @@ async def summarize_session(session_id: int, db: AsyncSession = Depends(get_db),
     s = result.scalar_one_or_none()
     if not s:
         raise HTTPException(404, "Session not found")
+    if not can_access_record(user, s):
+        raise HTTPException(403, "Access denied")
 
     messages = [{"role": t["role"], "text": t["text"]} for t in merge_message_turns(s.messages)]
     if not messages:
@@ -135,7 +158,7 @@ async def generate_output(
     session_id: int,
     output_type: str = "summary",
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     result = await db.execute(
         select(DBSession)
@@ -145,6 +168,8 @@ async def generate_output(
     s = result.scalar_one_or_none()
     if not s:
         raise HTTPException(404, "Session not found")
+    if not can_access_record(user, s):
+        raise HTTPException(403, "Access denied")
 
     messages = [{"role": t["role"], "text": t["text"]} for t in merge_message_turns(s.messages)]
     if not messages:
@@ -188,13 +213,15 @@ async def run_post_call(
     session_id: int,
     body: PostCallIn | None = None,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     """Manually trigger post-call processing (summary + outputs + note)."""
     result = await db.execute(select(DBSession).where(DBSession.id == session_id))
     s = result.scalar_one_or_none()
     if not s:
         raise HTTPException(404, "Session not found")
+    if not can_access_record(user, s):
+        raise HTTPException(403, "Access denied")
     if body and body.force:
         s.summary = None
     await db.commit()

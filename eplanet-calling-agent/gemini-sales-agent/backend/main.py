@@ -15,8 +15,15 @@ from backend.routers.documents import router as documents_router
 from backend.routers.outputs import router as outputs_router
 from backend.routers.ws_browser import router as ws_router
 from backend.routers.calls import router as calls_router
+from backend.routers.outbound import router as outbound_router
+from backend.routers.campaigns import router as campaigns_router
+from backend.routers.dnc import router as dnc_router
 from backend.routers.internal_bridge import router as internal_bridge_router
+from backend.routers.organizations import router as organizations_router
 from backend.routers.system import router as system_router
+from backend.routers.access_requests import router as access_requests_router
+from backend.routers.users import router as users_router
+from backend.routers.calendar import router as calendar_router
 from backend.db.database import init_db
 
 logging.basicConfig(level=logging.INFO)
@@ -56,8 +63,15 @@ app.include_router(documents_router)
 app.include_router(outputs_router)
 app.include_router(ws_router)
 app.include_router(calls_router)
+app.include_router(outbound_router)
+app.include_router(campaigns_router)
+app.include_router(dnc_router)
+app.include_router(organizations_router)
 app.include_router(internal_bridge_router)
 app.include_router(system_router)
+app.include_router(access_requests_router)
+app.include_router(users_router)
+app.include_router(calendar_router)
 
 
 @app.get("/health")

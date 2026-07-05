@@ -110,11 +110,16 @@ export default function SessionDetail() {
   const summaryOutput = (session.outputs || []).find((o: any) => o.output_type === 'summary');
   const leadOutput = (session.outputs || []).find((o: any) => o.output_type === 'lead_capture');
 
+  const contactLine = session.contact_number
+    ? `${session.contact_label || (session.meta?.direction === 'outbound' || session.channel_type === 'outbound' ? 'Called' : 'From')} ${session.contact_number}`
+    : null;
+
   const subtitleParts = [
     session.channel_type?.toUpperCase(),
     agentName,
-    dialedExt && `ext ${dialedExt}`,
-    session.caller_id && `caller ${session.caller_id}`,
+    contactLine,
+    !contactLine && dialedExt && `ext ${dialedExt}`,
+    !contactLine && session.caller_id && `caller ${session.caller_id}`,
     duration != null && `${Math.round(duration)}s`,
     new Date(session.started_at).toLocaleString(),
   ].filter(Boolean);
@@ -124,6 +129,20 @@ export default function SessionDetail() {
       <Link to="/admin/sessions" className="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-violet-400 mb-6 transition-colors">
         <ArrowLeft className="w-3.5 h-3.5" /> Back to sessions
       </Link>
+
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        {(session.meta?.direction === 'outbound' || session.channel_type === 'outbound') && (
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-orange-500/15 text-orange-300 font-semibold uppercase">Outbound</span>
+        )}
+        {session.campaign_name && (
+          <Link
+            to={session.campaign_id ? `/admin/campaigns/${session.campaign_id}` : '/admin/campaigns'}
+            className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 font-semibold hover:bg-amber-500/25"
+          >
+            {session.campaign_name}
+          </Link>
+        )}
+      </div>
 
       <PageHeader
         title={`Session #${id}`}
@@ -149,6 +168,38 @@ export default function SessionDetail() {
         <GlassCard className="p-4 mb-4 border-red-500/30 bg-red-500/5 flex items-start gap-2">
           <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
           <p className="text-sm text-red-300">{error}</p>
+        </GlassCard>
+      )}
+
+      {(contactLine || session.meta?.lead_capture || session.meta?.captured_contact) && (
+        <GlassCard className="p-4 mb-6 border-cyan-500/20">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-cyan-400 mb-2">
+            Contact
+          </div>
+          {contactLine && (
+            <p className="text-sm text-white font-mono">{contactLine}</p>
+          )}
+          {(session.meta?.lead_capture || session.meta?.captured_contact) && (
+            <dl className="mt-2 grid sm:grid-cols-2 gap-2 text-xs text-zinc-400">
+              {['name', 'email', 'phone', 'company'].map(field => {
+                const val =
+                  session.meta?.lead_capture?.[field] ||
+                  session.meta?.captured_contact?.[field];
+                if (!val) return null;
+                return (
+                  <div key={field}>
+                    <dt className="text-zinc-600 capitalize">{field}</dt>
+                    <dd className="text-zinc-200">{val}</dd>
+                  </div>
+                );
+              })}
+            </dl>
+          )}
+          {session.meta?.lead_id && (
+            <Link to="/admin/leads" className="text-xs text-violet-400 hover:underline mt-2 inline-block">
+              Lead #{session.meta.lead_id} in CRM →
+            </Link>
+          )}
         </GlassCard>
       )}
 

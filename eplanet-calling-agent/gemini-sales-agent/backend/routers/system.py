@@ -1,9 +1,41 @@
-"""System info for admin UI (SIP hints, defaults)."""
+"""System info for admin UI (SIP hints, defaults, global settings)."""
 import os
+from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.auth.deps import get_current_user, require_admin
+from backend.db.database import get_db
+from backend.db.models import PlatformSetting
+from backend.services.platform_settings import get_platform_setting, set_platform_setting
+from backend.services.telephony_diagnostics import (
+    DEFAULT_LOG_TAIL,
+    MAX_LOG_TAIL,
+    fetch_container_logs,
+    list_containers,
+    run_telephony_diagnostics,
+)
 
 router = APIRouter(prefix="/api/system", tags=["system"])
+
+SETTING_MASTER_PROMPT = "master_prompt"
+SETTING_CONCURRENT_CALLS = "max_concurrent_calls"
+
+
+class ConcurrentCallLimitIn(BaseModel):
+    limit: int
+
+
+
+class SettingsOut(BaseModel):
+    master_prompt: Optional[str] = None
+
+
+class SettingsIn(BaseModel):
+    master_prompt: Optional[str] = None
 
 _CODEC_LABELS = {
     "PCMU": "G.711 μ-law (PCMU)",
@@ -32,6 +64,17 @@ async def system_info() -> dict:
     if ip_mode not in ("auto", "fixed"):
         ip_mode = "auto"
 
+    lab_extensions = []
+    for ext in range(1001, 1011):
+        ext_s = str(ext)
+        lab_extensions.append(
+            {
+                "extension": ext_s,
+                "username": os.getenv(f"SIP_USER_{ext_s}", ext_s),
+                "password": os.getenv(f"SIP_PASS_{ext_s}", f"{ext_s}pass"),
+            }
+        )
+
     return {
         "sip_server": sip_ip,
         "external_ip": sip_ip,
@@ -46,12 +89,103 @@ async def system_info() -> dict:
         "sip_codec_label": _CODEC_LABELS.get(sip_codec.upper(), sip_codec),
         "sip_user_1001": os.getenv("SIP_USER_1001", "1001"),
         "sip_pass_1001": os.getenv("SIP_PASS_1001", "1001pass"),
+        "sip_user_1002": os.getenv("SIP_USER_1002", "1002"),
+        "sip_pass_1002": os.getenv("SIP_PASS_1002", "1002pass"),
+        "lab_extensions": lab_extensions,
+        "outbound_mode": os.getenv("OUTBOUND_MODE", "lab"),
         "default_admin_email": os.getenv("ADMIN_EMAIL", "admin@aura.ai"),
+        "outbound_lab_endpoint": os.getenv("OUTBOUND_LAB_ENDPOINT", "PJSIP/1001"),
         "test_extensions": {
-            "701": "Maya — Lead Qualifier",
-            "702": "Aria — Trangotech Sales",
-            "703": "Sam — Support FAQ",
-            "700": "First active agent (legacy)",
+            "700": "Sales fleet — inbound callbacks",
+            "701": "Alias → 700 (lab)",
             "600": "Echo test",
         },
     }
+
+
+@router.get("/settings", response_model=SettingsOut)
+async def get_settings(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+) -> SettingsOut:
+    result = await db.execute(
+        select(PlatformSetting).where(PlatformSetting.key == SETTING_MASTER_PROMPT)
+    )
+    row = result.scalar_one_or_none()
+    return SettingsOut(master_prompt=row.value if row else None)
+
+
+@router.put("/settings", response_model=SettingsOut)
+async def update_settings(
+    body: SettingsIn,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+) -> SettingsOut:
+    if body.master_prompt is not None:
+        result = await db.execute(
+            select(PlatformSetting).where(PlatformSetting.key == SETTING_MASTER_PROMPT)
+        )
+        row = result.scalar_one_or_none()
+        if row:
+            row.value = body.master_prompt or None
+        else:
+            db.add(PlatformSetting(key=SETTING_MASTER_PROMPT, value=body.master_prompt or None))
+    return SettingsOut(master_prompt=body.master_prompt)
+
+
+@router.get("/concurrent-call-limit")
+async def get_concurrent_call_limit(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    from backend.config import get_settings
+    settings = get_settings()
+    val = await get_platform_setting(SETTING_CONCURRENT_CALLS, db)
+    if val is None:
+        limit = settings.max_concurrent_outbound
+    else:
+        try:
+            limit = int(val)
+        except ValueError:
+            limit = settings.max_concurrent_outbound
+    return {"limit": limit}
+
+
+@router.put("/concurrent-call-limit")
+async def update_concurrent_call_limit(
+    body: ConcurrentCallLimitIn,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_admin),
+):
+    if body.limit < 1 or body.limit > 50:
+        raise HTTPException(400, "Limit must be between 1 and 50")
+    await set_platform_setting(SETTING_CONCURRENT_CALLS, str(body.limit), db)
+    await db.commit()
+    return {"limit": body.limit}
+
+
+@router.get("/diagnostics")
+async def telephony_diagnostics(_=Depends(get_current_user)) -> dict:
+    """Telephony + Docker health checks (admin UI — no SSH)."""
+    return run_telephony_diagnostics()
+
+
+@router.get("/logs/containers")
+async def log_containers(_=Depends(get_current_user)) -> dict:
+    return {"containers": list_containers()}
+
+
+@router.get("/logs")
+async def container_logs(
+    service: str = Query(..., description="Docker container name"),
+    tail: int = Query(DEFAULT_LOG_TAIL, ge=10, le=MAX_LOG_TAIL),
+    since_minutes: int = Query(60, ge=5, le=1440),
+    grep: Optional[str] = Query(None, max_length=80),
+    _=Depends(get_current_user),
+) -> dict:
+    return fetch_container_logs(
+        service,
+        tail=tail,
+        since_minutes=since_minutes,
+        grep=grep,
+    )

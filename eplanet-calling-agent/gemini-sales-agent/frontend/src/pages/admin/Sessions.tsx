@@ -4,6 +4,7 @@ import { useAuth } from '@/src/auth/AuthContext';
 import { Phone, Radio, Sparkles, Clock } from 'lucide-react';
 import { PageHeader, GlassCard, Badge } from '@/src/components/admin/theme';
 import { apiFetchList } from '@/src/lib/api';
+import OrgFilter, { appendOrgParam } from '@/src/components/admin/OrgFilter';
 
 function statusVariant(s: string): 'live' | 'success' | 'warn' | 'default' {
   if (s === 'active') return 'live';
@@ -15,13 +16,15 @@ function statusVariant(s: string): 'live' | 'success' | 'warn' | 'default' {
 export default function Sessions() {
   const { token } = useAuth();
   const [sessions, setSessions] = useState<any[]>([]);
+  const [organizationId, setOrganizationId] = useState('');
 
   useEffect(() => {
-    const load = () => apiFetchList('/api/sessions', token).then(setSessions);
+    const load = () =>
+      apiFetchList(appendOrgParam('/api/sessions', organizationId), token).then(setSessions);
     load();
     const t = setInterval(load, 10000);
     return () => clearInterval(t);
-  }, [token]);
+  }, [token, organizationId]);
 
   return (
     <div className="p-6 lg:p-8">
@@ -29,9 +32,12 @@ export default function Sessions() {
         title="Sessions"
         subtitle="Call history and live conversations — refreshes every 10s"
         action={
-          <div className="flex items-center gap-2 text-xs text-zinc-500">
-            <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-            Monitoring
+          <div className="flex items-center gap-3">
+            <OrgFilter value={organizationId} onChange={setOrganizationId} />
+            <div className="flex items-center gap-2 text-xs text-zinc-500">
+              <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+              Monitoring
+            </div>
           </div>
         }
       />
@@ -54,11 +60,31 @@ export default function Sessions() {
                         {agentName && (
                           <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-zinc-400">{agentName}</span>
                         )}
+                        {s.organization_name && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-300">{s.organization_name}</span>
+                        )}
+                        {(s.meta?.direction === 'outbound' || s.channel_type === 'outbound') && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-orange-500/15 text-orange-300">OUTBOUND</span>
+                        )}
+                        {s.campaign_name && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 truncate max-w-[140px]" title={s.campaign_name}>
+                            {s.campaign_name}
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-zinc-500 mt-1 truncate">
-                        {s.channel_type?.toUpperCase()}
-                        {s.caller_id && <> · {s.caller_id}</>}
-                        {s.meta?.dialed_extension && <> · ext {s.meta.dialed_extension}</>}
+                        {s.contact_number ? (
+                          <span className="text-zinc-300">
+                            {s.contact_label || (s.meta?.direction === 'outbound' || s.channel_type === 'outbound' ? 'Called' : 'From')}{' '}
+                            <span className="font-mono">{s.contact_number}</span>
+                          </span>
+                        ) : (
+                          <>
+                            {s.channel_type?.toUpperCase()}
+                            {s.caller_id && <> · {s.caller_id}</>}
+                            {s.meta?.dialed_extension && <> · ext {s.meta.dialed_extension}</>}
+                          </>
+                        )}
                         {duration != null && <> · {Math.round(duration)}s</>}
                       </div>
                       {s.summary ? (
@@ -94,7 +120,7 @@ export default function Sessions() {
         {sessions.length === 0 && (
           <GlassCard className="p-12 text-center">
             <Phone className="w-8 h-8 text-zinc-600 mx-auto mb-3" />
-            <p className="text-sm text-zinc-500">No sessions yet. Dial 701, 702, or 703 from Zoiper.</p>
+            <p className="text-sm text-zinc-500">No sessions yet. Dial 701–703 inbound or use Outbound Calls for lab dialing.</p>
           </GlassCard>
         )}
       </div>

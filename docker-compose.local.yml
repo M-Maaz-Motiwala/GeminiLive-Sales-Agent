@@ -1,0 +1,42 @@
+name: aura_local
+
+services:
+  postgres:
+    container_name: aura_postgres
+
+  redis:
+    container_name: aura_redis
+
+  platform:
+    container_name: aura_platform
+    ports:
+      - "8000:8000"
+
+  platform_init:
+    container_name: aura_platform_init
+
+  celery_worker:
+    container_name: aura_celery
+
+  frontend:
+    container_name: aura_frontend
+    ports:
+      - "8080:80"
+
+  asterisk:
+    container_name: asterisk
+    environment:
+      SIP_PORT: "5060"
+      ASTERISK_RTP_START: "10000"
+      ASTERISK_RTP_END: "10050"
+    ports:
+      - "8088:8088"
+      # host mode on SIP preserves the phone's real source IP in REGISTER.
+      - target: 5060
+        published: 5060
+        protocol: udp
+        mode: host
+      - "10000-10050:10000-10050/udp"
+
+  bridge:
+    container_name: gemini_bridge

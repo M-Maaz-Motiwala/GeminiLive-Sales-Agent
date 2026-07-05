@@ -1,7 +1,6 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: aura_postgres
     environment:
       POSTGRES_USER: aura
       POSTGRES_PASSWORD: aura_secret
@@ -17,7 +16,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: aura_redis
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -29,25 +27,25 @@ services:
     build:
       context: ./eplanet-calling-agent/gemini-sales-agent
       dockerfile: backend/Dockerfile
-    container_name: aura_platform
     env_file:
-      - .env
-      - .host.env
+      - ${APP_ENV_FILE:-.env}
+      - ${HOST_ENV_FILE:-.host.env}
     environment:
       DATABASE_URL: postgresql+asyncpg://aura:aura_secret@postgres:5432/aura_db
       REDIS_URL: redis://redis:6379/0
-    ports:
-      - "8000:8000"
+      BRIDGE_URL: http://bridge:8000
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - uploads_data:/app/uploads
     networks:
       - default
       - voip
+    volumes:
+      - uploads_data:/app/uploads
+      - ./asterisk/generated_${DEPLOY_ENV:-local}:/app/asterisk/generated
+      - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test:
         - CMD
@@ -64,15 +62,15 @@ services:
     build:
       context: ./eplanet-calling-agent/gemini-sales-agent
       dockerfile: backend/Dockerfile
-    container_name: aura_platform_init
     env_file:
-      - .env
-      - .host.env
+      - ${APP_ENV_FILE:-.env}
+      - ${HOST_ENV_FILE:-.host.env}
     environment:
       DATABASE_URL: postgresql+asyncpg://aura:aura_secret@postgres:5432/aura_db
       REDIS_URL: redis://redis:6379/0
     volumes:
       - uploads_data:/app/uploads
+      - ./asterisk/generated_${DEPLOY_ENV:-local}:/app/asterisk/generated
     depends_on:
       platform:
         condition: service_healthy
@@ -86,11 +84,10 @@ services:
     build:
       context: ./eplanet-calling-agent/gemini-sales-agent
       dockerfile: backend/Dockerfile
-    container_name: aura_celery
     command: celery -A backend.celery_app worker --loglevel=info
     env_file:
-      - .env
-      - .host.env
+      - ${APP_ENV_FILE:-.env}
+      - ${HOST_ENV_FILE:-.host.env}
     environment:
       DATABASE_URL: postgresql+asyncpg://aura:aura_secret@postgres:5432/aura_db
       REDIS_URL: redis://redis:6379/0
@@ -101,14 +98,12 @@ services:
         condition: service_healthy
     volumes:
       - uploads_data:/app/uploads
+      - ./asterisk/generated_${DEPLOY_ENV:-local}:/app/asterisk/generated
     restart: unless-stopped
 
   frontend:
     build:
       context: ./eplanet-calling-agent/gemini-sales-agent/frontend
-    container_name: aura_frontend
-    ports:
-      - "80:80"
     depends_on:
       platform:
         condition: service_healthy
@@ -116,28 +111,31 @@ services:
 
   asterisk:
     image: andrius/asterisk:22
-    container_name: asterisk
     entrypoint: ["/bin/sh", "/templates/entrypoint-wrap.sh"]
     command: ["/usr/sbin/asterisk", "-vvvdddf", "-T", "-W", "-U", "asterisk", "-p"]
     env_file:
-      - .host.env
+      - ${APP_ENV_FILE:-.env}
+      - ${HOST_ENV_FILE:-.host.env}
     environment:
-      - EXTERNAL_IP=${EXTERNAL_IP:-}
+      EXTERNAL_IP: "${EXTERNAL_IP:-}"
+      SIP_PORT: "${SIP_PORT:-5060}"
+      ASTERISK_RTP_START: "${ASTERISK_RTP_START:-10000}"
+      ASTERISK_RTP_END: "${ASTERISK_RTP_END:-10050}"
+      DIDWW_SIP_USER: "${DIDWW_SIP_USER:-}"
+      DIDWW_SIP_SECRET: "${DIDWW_SIP_SECRET:-}"
+      DIDWW_FROM_DOMAIN: "${DIDWW_FROM_DOMAIN:-}"
     volumes:
       - ./asterisk/entrypoint-wrap.sh:/templates/entrypoint-wrap.sh:ro
       - ./asterisk/pjsip.conf.template:/templates/pjsip.conf.template:ro
       - ./asterisk/rtp.conf.template:/templates/rtp.conf.template:ro
-      - ./.host.env:/run/host.env:ro
+      - ./${HOST_ENV_FILE:-.host.env}:/run/host.env:ro
       - ./asterisk/asterisk.conf:/etc/asterisk/asterisk.conf:ro
       - ./asterisk/modules.conf:/etc/asterisk/modules.conf:ro
       - ./asterisk/http.conf:/etc/asterisk/http.conf:ro
       - ./asterisk/ari.conf:/etc/asterisk/ari.conf:ro
       - ./asterisk/extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ./asterisk/generated_${DEPLOY_ENV:-local}:/etc/asterisk/generated
       - ./asterisk/logger.conf:/etc/asterisk/logger.conf:ro
-    ports:
-      - "5060:5060/udp"
-      - "8088:8088"
-      - "10000-10050:10000-10050/udp"
     networks:
       - voip
     healthcheck:
@@ -152,11 +150,14 @@ services:
 
   bridge:
     build: ./bridge
-    container_name: gemini_bridge
     env_file:
-      - .env
+      - ${APP_ENV_FILE:-.env}
+      - ${HOST_ENV_FILE:-.host.env}
     environment:
       PLATFORM_URL: http://platform:8000
+      MAX_CONCURRENT_CALLS: ${MAX_CONCURRENT_CALLS:-5}
+      RTP_PORT_BASE: ${RTP_PORT_BASE:-40000}
+      RTP_PORT_COUNT: ${RTP_PORT_COUNT:-50}
     depends_on:
       asterisk:
         condition: service_healthy

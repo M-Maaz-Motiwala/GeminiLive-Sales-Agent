@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/src/auth/AuthContext';
-import { Users, Search, ExternalLink } from 'lucide-react';
+import { Users, Search, ExternalLink, PhoneOutgoing } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { PageHeader, GlassCard } from '@/src/components/admin/theme';
+import { PageHeader, GlassCard, BtnGhost } from '@/src/components/admin/theme';
 import { API_BASE, apiFetchList } from '@/src/lib/api';
+import { dialOutbound, fetchOutboundAgents } from '@/src/lib/outbound';
+import OrgFilter from '@/src/components/admin/OrgFilter';
 
 const STATUSES = ['new', 'qualified', 'contacted', 'closed', 'lost'];
 
@@ -14,18 +16,58 @@ export default function Leads() {
   const { token } = useAuth();
   const [leads, setLeads] = useState<any[]>([]);
   const [statusFilter, setStatusFilter] = useState('');
+  const [organizationId, setOrganizationId] = useState('');
   const [search, setSearch] = useState('');
+  const [outboundAgents, setOutboundAgents] = useState<any[]>([]);
+  const [outboundAgentId, setOutboundAgentId] = useState<number | null>(null);
+  const [dialingId, setDialingId] = useState<number | null>(null);
+  const [dialMsg, setDialMsg] = useState('');
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-  const load = (status = statusFilter, q = search) => {
+  const load = (status = statusFilter, q = search, org = organizationId) => {
     const params = new URLSearchParams();
     if (status) params.set('status', status);
     if (q.trim()) params.set('search', q.trim());
+    if (org) params.set('organization_id', org);
     const qs = params.toString() ? `?${params}` : '';
     apiFetchList(`/api/leads${qs}`, token).then(setLeads);
   };
 
-  useEffect(() => { load(); }, [token, statusFilter]);
+  useEffect(() => {
+    load();
+    if (token) {
+      fetchOutboundAgents(token).then(agents => {
+        setOutboundAgents(agents);
+        const pool = organizationId
+          ? agents.filter(a => String(a.organization_id) === organizationId)
+          : agents;
+        setOutboundAgentId(pool[0]?.id ?? agents[0]?.id ?? null);
+      });
+    }
+  }, [token, statusFilter, organizationId]);
+
+  useEffect(() => {
+    if (!organizationId) return;
+    const pool = outboundAgents.filter(a => String(a.organization_id) === organizationId);
+    setOutboundAgentId(pool[0]?.id ?? null);
+  }, [organizationId, outboundAgents]);
+
+  const callLead = async (lead: any) => {
+    if (!outboundAgentId) {
+      setDialMsg('No outbound agent — run bootstrap or open Outbound Calls.');
+      return;
+    }
+    setDialingId(lead.id);
+    setDialMsg('');
+    try {
+      await dialOutbound(token, { agent_id: outboundAgentId, lead_id: lead.id });
+      setDialMsg(`Dialing lead #${lead.id} — answer on Zoiper 1001.`);
+    } catch (e) {
+      setDialMsg(e instanceof Error ? e.message : 'Dial failed');
+    } finally {
+      setDialingId(null);
+    }
+  };
 
   const updateStatus = async (lead: any, status: string) => {
     await fetch(`${API_BASE}/api/leads/${lead.id}`, {
@@ -38,9 +80,26 @@ export default function Leads() {
 
   return (
     <div className="p-6 lg:p-8">
-      <PageHeader title="Leads" subtitle="CRM leads from calls and agent tools" />
+      <PageHeader
+        title="Leads"
+        subtitle="CRM leads from calls — use Call to dial with lead context (outbound)"
+        action={
+          <Link to="/admin/outbound">
+            <BtnGhost>
+              <PhoneOutgoing className="w-4 h-4" /> Outbound Calls
+            </BtnGhost>
+          </Link>
+        }
+      />
+
+      {dialMsg && (
+        <p className="text-sm text-violet-300 bg-violet-500/10 border border-violet-500/20 rounded-xl px-4 py-2 mb-4">
+          {dialMsg}
+        </p>
+      )}
 
       <div className="flex flex-col sm:flex-row gap-3 mb-6">
+        <OrgFilter value={organizationId} onChange={setOrganizationId} className="sm:w-56" />
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
           <input
@@ -78,6 +137,7 @@ export default function Leads() {
                   <div className="text-sm font-medium text-white">{l.name || '(no name)'}</div>
                   <div className="text-xs text-zinc-500 mt-0.5">
                     {[l.email, l.phone, l.company].filter(Boolean).join(' · ') || 'No contact details'}
+                    {l.organization_name && <> · <span className="text-violet-400/80">{l.organization_name}</span></>}
                   </div>
                   {l.notes && (
                     <p className="text-xs text-zinc-400 mt-2 line-clamp-2 leading-relaxed">{l.notes}</p>
@@ -97,9 +157,20 @@ export default function Leads() {
                   </div>
                 </div>
               </div>
-              <select value={l.status} onChange={e => updateStatus(l, e.target.value)} className={selectCls}>
-                {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
+              <div className="flex flex-col sm:items-end gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => callLead(l)}
+                  disabled={dialingId === l.id || !outboundAgentId}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[10px] font-semibold uppercase tracking-wide border border-orange-500/30 text-orange-300 hover:bg-orange-500/10 disabled:opacity-50"
+                >
+                  <PhoneOutgoing className="w-3.5 h-3.5" />
+                  {dialingId === l.id ? 'Dialing…' : 'Call'}
+                </button>
+                <select value={l.status} onChange={e => updateStatus(l, e.target.value)} className={selectCls}>
+                  {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
             </div>
           </GlassCard>
         ))}

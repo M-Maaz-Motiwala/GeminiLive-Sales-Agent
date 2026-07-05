@@ -5,6 +5,7 @@ import { StickyNote, Trash2, Plus, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PageHeader, GlassCard, BtnGhost } from '@/src/components/admin/theme';
 import { API_BASE, apiFetch, apiFetchList } from '@/src/lib/api';
+import OrgFilter from '@/src/components/admin/OrgFilter';
 
 const ENTITY_TYPES = ['', 'session', 'lead', 'contact'];
 
@@ -12,17 +13,21 @@ export default function Notes() {
   const { token } = useAuth();
   const [notes, setNotes] = useState<any[]>([]);
   const [entityType, setEntityType] = useState('');
+  const [organizationId, setOrganizationId] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ entity_type: 'session', entity_id: '', content: '' });
   const [error, setError] = useState('');
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const load = () => {
-    const q = entityType ? `?entity_type=${entityType}` : '';
-    apiFetchList(`/api/notes${q}`, token).then(setNotes);
+    const params = new URLSearchParams();
+    if (entityType) params.set('entity_type', entityType);
+    if (organizationId) params.set('organization_id', organizationId);
+    const qs = params.toString() ? `?${params}` : '';
+    apiFetchList(`/api/notes${qs}`, token).then(setNotes);
   };
 
-  useEffect(() => { load(); }, [token, entityType]);
+  useEffect(() => { load(); }, [token, entityType, organizationId]);
 
   const createNote = async () => {
     setError('');
@@ -91,7 +96,8 @@ export default function Notes() {
         </GlassCard>
       )}
 
-      <div className="flex flex-wrap gap-2 mb-6">
+      <div className="flex flex-wrap gap-2 mb-6 items-center">
+        <OrgFilter value={organizationId} onChange={setOrganizationId} className="mr-2" />
         {ENTITY_TYPES.map(t => (
           <button
             key={t || 'all'}

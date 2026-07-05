@@ -1,22 +1,14 @@
+import React, { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/src/auth/AuthContext';
 import { cn } from '@/lib/utils';
 import {
-  LayoutDashboard, Bot, PhoneCall, Users, UserCheck,
+  LayoutDashboard, Bot, Building2, PhoneCall, PhoneOutgoing, Megaphone, Users, UserCheck,
   FileText, Layers, LogOut, StickyNote, Headphones,
-  HelpCircle, BookOpen,
+  HelpCircle, BookOpen, Settings, ShieldAlert,
 } from 'lucide-react';
 
-const NAV = [
-  { to: '/admin', icon: LayoutDashboard, label: 'Command Center', end: true },
-  { to: '/admin/agents', icon: Bot, label: 'AI Agents' },
-  { to: '/admin/sessions', icon: PhoneCall, label: 'Call Sessions' },
-  { to: '/admin/leads', icon: UserCheck, label: 'Leads' },
-  { to: '/admin/contacts', icon: Users, label: 'Contacts' },
-  { to: '/admin/documents', icon: FileText, label: 'Knowledge Base' },
-  { to: '/admin/outputs', icon: Layers, label: 'Outputs' },
-  { to: '/admin/notes', icon: StickyNote, label: 'Notes' },
-];
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
 const NAV_HELP = [
   { to: '/admin/docs', icon: BookOpen, label: 'Help & Docs' },
@@ -24,10 +16,61 @@ const NAV_HELP = [
 ];
 
 export function AdminLayout() {
-  const { user, logout } = useAuth();
+  const { user, token, logout } = useAuth();
   const navigate = useNavigate();
+  const [requestCount, setRequestCount] = useState<number>(0);
+
+  const fetchRequestCount = async () => {
+    if (!token || !user) return;
+    if (user.role === 'user') return;
+    try {
+      const res = await fetch(`${API_BASE}/api/access-requests/count`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setRequestCount(data.count);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    fetchRequestCount();
+    window.addEventListener('accessRequestsChanged', fetchRequestCount);
+    return () => window.removeEventListener('accessRequestsChanged', fetchRequestCount);
+  }, [token, user]);
 
   const handleLogout = () => { logout(); navigate('/admin/login'); };
+
+  const getNavLinks = () => {
+    const links = [
+      { to: '/admin', icon: LayoutDashboard, label: 'Command Center', end: true, roles: ['admin', 'org_head', 'user'] },
+      { 
+        to: '/admin/access-requests', 
+        icon: ShieldAlert, 
+        label: 'Access Requests', 
+        badge: requestCount > 0 ? requestCount : undefined,
+        roles: ['admin', 'org_head'] 
+      },
+      { to: '/admin/organizations', icon: Building2, label: 'Organizations', roles: ['admin'] },
+      { to: '/admin/agents', icon: Bot, label: 'AI Agents', roles: ['admin', 'org_head'] },
+      { to: '/admin/sessions', icon: PhoneCall, label: 'Call Sessions', roles: ['admin', 'org_head', 'user'] },
+      { to: '/admin/outbound', icon: PhoneOutgoing, label: 'Outbound Calls', roles: ['admin', 'org_head', 'user'] },
+      { to: '/admin/campaigns', icon: Megaphone, label: 'Campaigns', roles: ['admin', 'org_head', 'user'] },
+      { to: '/admin/leads', icon: UserCheck, label: 'Leads', roles: ['admin', 'org_head', 'user'] },
+      { to: '/admin/contacts', icon: Users, label: 'Contacts', roles: ['admin', 'org_head', 'user'] },
+      { to: '/admin/documents', icon: FileText, label: 'Knowledge Base', roles: ['admin', 'org_head'] },
+      { to: '/admin/outputs', icon: Layers, label: 'Outputs', roles: ['admin', 'org_head', 'user'] },
+      { to: '/admin/notes', icon: StickyNote, label: 'Notes', roles: ['admin', 'org_head', 'user'] },
+      { to: '/admin/settings', icon: Settings, label: 'Settings', roles: ['admin', 'org_head', 'user'] },
+    ];
+
+    return links.filter(link => user && link.roles.includes(user.role));
+  };
+
+  const navLinks = getNavLinks();
 
   return (
     <div className="flex h-screen bg-[#07070b] text-zinc-100 overflow-hidden">
@@ -51,7 +94,7 @@ export function AdminLayout() {
         </div>
 
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {NAV.map(({ to, icon: Icon, label, end }) => (
+          {navLinks.map(({ to, icon: Icon, label, end, badge }) => (
             <NavLink
               key={to}
               to={to}
@@ -66,7 +109,12 @@ export function AdminLayout() {
               }
             >
               <Icon className="w-4 h-4 shrink-0" />
-              {label}
+              <span className="flex-1 truncate">{label}</span>
+              {badge !== undefined && (
+                <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-indigo-600 px-1 text-[10px] font-bold text-white">
+                  {badge}
+                </span>
+              )}
             </NavLink>
           ))}
 

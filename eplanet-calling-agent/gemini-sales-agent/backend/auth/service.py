@@ -37,6 +37,20 @@ def create_refresh_token(subject: str) -> str:
     )
 
 
+def create_state_token(subject: str, token_type: str = "oauth_state", expires_minutes: int = 5) -> str:
+    """Short-lived signed token for OAuth `state` binding (e.g. Google Calendar).
+
+    Reuses the access-token secret so the callback can re-derive the user
+    without trusting a raw user_id in the query string.
+    """
+    expire = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
+    return jwt.encode(
+        {"sub": subject, "exp": expire, "type": token_type},
+        settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
+
+
 def decode_token(token: str) -> Optional[dict]:
     try:
         payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
