@@ -15,7 +15,7 @@ type Props = {
 };
 
 export function useOrganizations() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [organizations, setOrganizations] = useState<Org[]>([]);
 
   useEffect(() => {
@@ -25,11 +25,26 @@ export function useOrganizations() {
       .catch(() => setOrganizations([]));
   }, [token]);
 
-  return organizations;
+  // Non-admins only ever see their own org (the backend enforces this too).
+  const isAdmin = user?.role === 'admin';
+  return isAdmin ? organizations : organizations.filter(o => o.id === user?.organization_id);
 }
 
 export default function OrgFilter({ value, onChange, className = '', showAll = true }: Props) {
+  const { user } = useAuth();
   const organizations = useOrganizations();
+  const isAdmin = user?.role === 'admin';
+
+  // Non-admins: lock to their own org and render nothing.
+  // The backend already scopes all list endpoints by the user's org, so the
+  // filter dropdown is redundant for them.
+  useEffect(() => {
+    if (!isAdmin && user?.organization_id && !value) {
+      onChange(String(user.organization_id));
+    }
+  }, [isAdmin, user?.organization_id, value, onChange]);
+
+  if (!isAdmin) return null;
 
   return (
     <select

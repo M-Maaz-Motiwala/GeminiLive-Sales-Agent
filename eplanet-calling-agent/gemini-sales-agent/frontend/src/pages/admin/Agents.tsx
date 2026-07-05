@@ -7,8 +7,10 @@ import { PageHeader, GlassCard, BtnPrimary, BtnGhost, Badge } from '@/src/compon
 import { cn } from '@/lib/utils';
 
 const CRM_TOOLS = ['create_lead', 'search_contacts', 'create_note', 'update_lead_status'];
+const CALENDAR_TOOLS = ['find_next_available_slot', 'list_available_slots', 'schedule_meeting', 'cancel_meeting'];
 const RAG_TOOLS = ['search_knowledge_base'];
 const SEARCH_TOOLS = ['google_search'];
+const SYSTEM_TOOLS = ['end_call'];
 const VOICES = [
   { name: 'Zephyr', style: 'Bright', gender: 'female' },
   { name: 'Puck', style: 'Upbeat', gender: 'male' },
@@ -64,7 +66,8 @@ const selectCls = 'w-full rounded-xl border border-white/10 bg-black/40 px-4 py-
 const inputCls = selectCls;
 
 export default function Agents() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [agents, setAgents] = useState<any[]>([]);
   const [organizations, setOrganizations] = useState<any[]>([]);
   const [editing, setEditing] = useState<any | null>(null);
@@ -227,15 +230,23 @@ export default function Agents() {
             {error && <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-2">{error}</p>}
             <Field label="Name"><input className={inputCls} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></Field>
             <Field label="Organization">
-              <select className={selectCls} value={form.organization_id} onChange={e => setForm(f => ({ ...f, organization_id: e.target.value }))}>
-                <option value="">Select organization…</option>
-                {organizations.map(o => (
-                  <option key={o.id} value={o.id}>{o.name} — DID {o.did}</option>
-                ))}
-              </select>
-              <p className="text-xs text-zinc-500 mt-1">
-                <Link to="/admin/organizations" className="text-violet-400 hover:underline">Add organization</Link> to register a new DID first.
-              </p>
+              {isAdmin ? (
+                <select className={selectCls} value={form.organization_id} onChange={e => setForm(f => ({ ...f, organization_id: e.target.value }))}>
+                  <option value="">Select organization…</option>
+                  {organizations.map(o => (
+                    <option key={o.id} value={o.id}>{o.name} — DID {o.did}</option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-sm text-white py-2">
+                  {organizations.find(o => String(o.id) === String(form.organization_id))?.name || '—'}
+                </p>
+              )}
+              {isAdmin && (
+                <p className="text-xs text-zinc-500 mt-1">
+                  <Link to="/admin/organizations" className="text-violet-400 hover:underline">Add organization</Link> to register a new DID first.
+                </p>
+              )}
             </Field>
             <Field label="Voice">
               <select className={selectCls} value={form.voice} onChange={e => setForm(f => ({ ...f, voice: e.target.value }))}>
@@ -266,10 +277,39 @@ export default function Agents() {
             {!editing && <p className="text-xs text-zinc-500">SIP lab extension is assigned automatically.</p>}
             <Field label="Tools">
               <div className="space-y-2 text-sm text-zinc-400">
-                {[...CRM_TOOLS, ...RAG_TOOLS, ...SEARCH_TOOLS].map(t => (
+                <p className="text-[10px] uppercase tracking-wider text-zinc-600">CRM</p>
+                {CRM_TOOLS.map(t => (
                   <label key={t} className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={form.enabled_tools.includes(t)} onChange={() => toggleTool(t)} className="rounded accent-violet-600" />
                     {t}
+                  </label>
+                ))}
+                <p className="text-[10px] uppercase tracking-wider text-zinc-600 pt-2">Knowledge base</p>
+                {RAG_TOOLS.map(t => (
+                  <label key={t} className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={form.enabled_tools.includes(t)} onChange={() => toggleTool(t)} className="rounded accent-violet-600" />
+                    {t}
+                  </label>
+                ))}
+                <p className="text-[10px] uppercase tracking-wider text-zinc-600 pt-2">Calendar</p>
+                {CALENDAR_TOOLS.map(t => (
+                  <label key={t} className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={form.enabled_tools.includes(t)} onChange={() => toggleTool(t)} className="rounded accent-violet-600" />
+                    {t}
+                  </label>
+                ))}
+                <p className="text-[10px] uppercase tracking-wider text-zinc-600 pt-2">Search</p>
+                {SEARCH_TOOLS.map(t => (
+                  <label key={t} className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={form.enabled_tools.includes(t)} onChange={() => toggleTool(t)} className="rounded accent-violet-600" />
+                    {t}
+                  </label>
+                ))}
+                <p className="text-[10px] uppercase tracking-wider text-zinc-600 pt-2">System</p>
+                {SYSTEM_TOOLS.map(t => (
+                  <label key={t} className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked disabled className="rounded accent-violet-600 opacity-60" />
+                    {t} <span className="text-[10px] text-zinc-600">(always on)</span>
                   </label>
                 ))}
               </div>

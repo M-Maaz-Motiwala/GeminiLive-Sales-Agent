@@ -25,7 +25,8 @@ function defaultAgentIdsForOrg(
 }
 
 export default function Campaigns() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [organizations, setOrganizations] = useState<any[]>([]);
   const [agents, setAgents] = useState<any[]>([]);
@@ -153,18 +154,22 @@ export default function Campaigns() {
           <label className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5 block">
             Organization
           </label>
-          <select
-            className={selectCls}
-            value={organizationId}
-            onChange={e => onOrganizationChange(e.target.value)}
-          >
-            <option value="">Select organization…</option>
-            {organizations.map(o => (
-              <option key={o.id} value={o.id}>
-                {o.name} — DID {o.did}
-              </option>
-            ))}
-          </select>
+          {isAdmin ? (
+            <select
+              className={selectCls}
+              value={organizationId}
+              onChange={e => onOrganizationChange(e.target.value)}
+            >
+              <option value="">Select organization…</option>
+              {organizations.map(o => (
+                <option key={o.id} value={o.id}>
+                  {o.name} — DID {o.did}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <p className="text-sm text-white py-2">{selectedOrg?.name || '—'}</p>
+          )}
           {selectedOrg && (
             <p className="text-[10px] text-zinc-600 mt-1">
               Outbound calls use caller ID {selectedOrg.did}

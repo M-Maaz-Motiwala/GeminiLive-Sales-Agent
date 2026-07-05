@@ -15,7 +15,8 @@ function docBadge(status: string): 'success' | 'warn' | 'default' | 'live' {
 const selectCls = 'rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-violet-500/50';
 
 export default function Documents() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [docs, setDocs] = useState<any[]>([]);
   const [agents, setAgents] = useState<any[]>([]);
   const [organizations, setOrganizations] = useState<any[]>([]);
@@ -114,9 +115,15 @@ export default function Documents() {
           {uploadTarget === 'org' ? (
             <div>
               <label className="block text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">Organization</label>
-              <select value={organizationId} onChange={e => setOrganizationId(e.target.value)} className={selectCls}>
-                {organizations.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-              </select>
+              {isAdmin ? (
+                <select value={organizationId} onChange={e => setOrganizationId(e.target.value)} className={selectCls}>
+                  {organizations.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </select>
+              ) : (
+                <p className="text-sm text-white py-2 px-1">
+                  {organizations.find(o => String(o.id) === String(organizationId))?.name || '—'}
+                </p>
+              )}
             </div>
           ) : (
             <div>

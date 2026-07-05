@@ -20,6 +20,10 @@ import FAQ from '@/src/pages/admin/FAQ';
 import HelpDocs from '@/src/pages/admin/HelpDocs';
 import Settings from '@/src/pages/admin/Settings';
 import Organizations from '@/src/pages/admin/Organizations';
+import GoogleCallback from '@/src/pages/GoogleCallback';
+import AccessRequestForm from '@/src/pages/AccessRequestForm';
+import PendingApproval from '@/src/pages/PendingApproval';
+import AccessRequests from '@/src/pages/admin/AccessRequests';
 
 export default function App() {
   return (
@@ -28,11 +32,21 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/admin" replace />} />
           <Route path="/admin/login" element={<Login />} />
+          <Route path="/auth/google/callback" element={<GoogleCallback />} />
+          <Route
+            path="/access-request-form"
+            element={<ProtectedRoute><AccessRequestForm /></ProtectedRoute>}
+          />
+          <Route
+            path="/pending-approval"
+            element={<ProtectedRoute><PendingApproval /></ProtectedRoute>}
+          />
           <Route
             path="/admin"
             element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}
           >
             <Route index element={<Dashboard />} />
+            <Route path="access-requests" element={<AccessRequests />} />
             <Route path="agents" element={<Agents />} />
             <Route path="organizations" element={<Organizations />} />
             <Route path="sessions" element={<Sessions />} />

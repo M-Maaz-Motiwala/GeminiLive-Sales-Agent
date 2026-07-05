@@ -6,9 +6,9 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
-from backend.auth.deps import get_current_user
+from backend.auth.deps import get_current_user, require_admin
 from backend.db.database import get_db
-from backend.db.models import Agent, Organization
+from backend.db.models import Agent, Organization, User, UserRole
 from backend.services.asterisk_registry import sync_organizations_to_asterisk
 from backend.services.phone_normalize import normalize_did
 
@@ -70,8 +70,17 @@ async def _agent_counts(db: AsyncSession) -> dict[int, int]:
 @router.get("")
 async def list_organizations(
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
+    # Non-admins only see their own organization.
+    if user.role != UserRole.admin:
+        if not user.organization_id:
+            return []
+        org = await db.get(Organization, user.organization_id)
+        if not org:
+            return []
+        counts = await _agent_counts(db)
+        return [_org_out(org, counts.get(org.id, 0))]
     result = await db.execute(
         select(Organization).order_by(Organization.created_at.desc())
     )
@@ -80,11 +89,45 @@ async def list_organizations(
     return [_org_out(o, counts.get(o.id, 0)) for o in orgs]
 
 
+@router.get("/available")
+async def list_available_organizations(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Return all active organizations for the access-request dropdown.
+
+    Any authenticated user (including unapproved ones with no organization yet)
+    can list active orgs so they can pick one to request access to.
+    """
+    result = await db.execute(
+        select(Organization)
+        .where(Organization.is_active.is_(True))
+        .order_by(Organization.name.asc())
+    )
+    orgs = result.scalars().all()
+    return [{"id": o.id, "name": o.name} for o in orgs]
+
+
+@router.get("/{org_id}")
+async def get_organization(
+    org_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(404, "Organization not found")
+    if user.role != UserRole.admin and org.id != user.organization_id:
+        raise HTTPException(403, "Access denied")
+    counts = await _agent_counts(db)
+    return _org_out(org, counts.get(org.id, 0))
+
+
 @router.post("")
 async def create_organization(
     body: OrganizationIn,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(require_admin),
 ):
     existing = await db.execute(
         select(Organization).where(Organization.did == body.did)
@@ -109,25 +152,12 @@ async def create_organization(
     return {**_org_out(org, 0), "telephony": telephony}
 
 
-@router.get("/{org_id}")
-async def get_organization(
-    org_id: int,
-    db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
-):
-    org = await db.get(Organization, org_id)
-    if not org:
-        raise HTTPException(404, "Organization not found")
-    counts = await _agent_counts(db)
-    return _org_out(org, counts.get(org.id, 0))
-
-
 @router.put("/{org_id}")
 async def update_organization(
     org_id: int,
     body: OrganizationIn,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(require_admin),
 ):
     org = await db.get(Organization, org_id)
     if not org:
@@ -161,7 +191,7 @@ async def update_organization(
 async def delete_organization(
     org_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    _=Depends(require_admin),
 ):
     org = await db.get(Organization, org_id)
     if not org:

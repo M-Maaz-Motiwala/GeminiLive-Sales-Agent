@@ -63,6 +63,7 @@ class CallStartIn(BaseModel):
     lead_id: Optional[int] = None
     dialed_endpoint: Optional[str] = None
     campaign_lead_id: Optional[int] = None
+    owner_id: Optional[int] = None  # UI user who initiated the outbound call
 
 
 class TranscriptIn(BaseModel):
@@ -220,6 +221,7 @@ async def call_start(
 
     db_session = DBSession(
         agent_id=agent.id,
+        owner_id=body.owner_id,
         caller_id=body.caller_id,
         channel_type=channel_type,
         status=SessionStatus.active,

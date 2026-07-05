@@ -12,6 +12,7 @@ from backend.services.bridge_client import bridge_status, originate_outbound
 from backend.services.endpoint_resolver import resolve_caller_id, resolve_endpoint
 from backend.services.outbound_policy import assert_may_dial
 from backend.services.phone_utils import normalize_e164
+from backend.services.platform_settings import get_platform_setting
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -38,6 +39,7 @@ async def dial_one(
     caller_id: Optional[str] = None,
     campaign_lead_id: Optional[int] = None,
     connect_experience: Optional[str] = None,
+    owner_id: Optional[int] = None,
 ) -> dict[str, Any]:
     if agent.type not in (AgentType.sales, AgentType.outbound_sales):
         raise ValueError("Agent is not a sales agent")
@@ -49,18 +51,30 @@ async def dial_one(
     agent_did = await _resolve_agent_did(db, agent)
     cid = resolve_caller_id(caller_id, agent_did=agent_did)
     logger.info(
-        "Outbound dial agent=%s org=%s caller_id=%s endpoint=%s",
+        "Outbound dial agent=%s org=%s caller_id=%s endpoint=%s owner=%s",
         agent.slug,
         agent.organization_id,
         cid,
         ep,
+        owner_id,
     )
 
     status = await bridge_status()
     active = int(status.get("active_calls") or 0)
-    max_c = int(status.get("max_concurrent") or settings.max_concurrent_outbound)
+    
+    # Get platform setting dynamically
+    val = await get_platform_setting("max_concurrent_calls", db)
+    default_limit = settings.max_concurrent_outbound
+    try:
+        max_c = int(val) if val is not None else default_limit
+    except ValueError:
+        max_c = default_limit
+
+    # Hard cap at 50
+    max_c = min(max(1, max_c), 50)
+
     if active >= max_c:
-        raise RuntimeError(f"Bridge at capacity ({active}/{max_c} active calls)")
+        raise RuntimeError(f"Platform at concurrent call capacity ({active}/{max_c} active calls)")
 
     bridge_resp = await originate_outbound(
         agent_slug=agent.slug,
@@ -69,6 +83,7 @@ async def dial_one(
         caller_id=cid,
         campaign_lead_id=campaign_lead_id,
         connect_experience=connect_experience,
+        owner_id=owner_id,
     )
 
     if lead and lead.phone:

@@ -21,6 +21,9 @@ from backend.routers.dnc import router as dnc_router
 from backend.routers.internal_bridge import router as internal_bridge_router
 from backend.routers.organizations import router as organizations_router
 from backend.routers.system import router as system_router
+from backend.routers.access_requests import router as access_requests_router
+from backend.routers.users import router as users_router
+from backend.routers.calendar import router as calendar_router
 from backend.db.database import init_db
 
 logging.basicConfig(level=logging.INFO)
@@ -66,6 +69,9 @@ app.include_router(dnc_router)
 app.include_router(organizations_router)
 app.include_router(internal_bridge_router)
 app.include_router(system_router)
+app.include_router(access_requests_router)
+app.include_router(users_router)
+app.include_router(calendar_router)
 
 
 @app.get("/health")

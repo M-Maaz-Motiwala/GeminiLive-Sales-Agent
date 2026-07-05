@@ -139,16 +139,24 @@ SALES_TOOLS = [
     "update_lead_status",
     "search_contacts",
     "search_knowledge_base",
+    "find_next_available_slot",
+    "list_available_slots",
+    "schedule_meeting",
+    "cancel_meeting",
     "end_call",
 ]
 
 FLEET = [
     ("Maya", "sales-maya", "Zephyr", "female"),
     ("Jordan", "sales-jordan", "Kore", "female"),
-    ("Morgan", "sales-morgan", "Aoede", "female"),
-    ("Casey", "sales-casey", "Leda", "female"),
-    ("Riley", "sales-riley", "Charon", "male"),
 ]
+
+# Slugs of fleet agents that are no longer pre-seeded; deactivate if present.
+RETIRED_FLEET_SLUGS = (
+    "sales-morgan",
+    "sales-casey",
+    "sales-riley",
+)
 
 LEGACY_SLUGS = (
     "lead-qualifier",
@@ -166,7 +174,7 @@ async def seed_agents() -> None:
         if not org:
             raise RuntimeError("Default organization missing — run seed_organizations first")
 
-        for slug in LEGACY_SLUGS:
+        for slug in LEGACY_SLUGS + RETIRED_FLEET_SLUGS:
             result = await db.execute(select(Agent).where(Agent.slug == slug))
             legacy = result.scalar_one_or_none()
             if legacy:

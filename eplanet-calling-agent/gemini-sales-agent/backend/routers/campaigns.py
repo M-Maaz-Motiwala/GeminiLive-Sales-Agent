@@ -22,6 +22,8 @@ from backend.db.models import (
     CampaignStatus,
     Lead,
     Organization,
+    User,
+    UserRole,
 )
 from backend.services.campaign_csv import parse_campaign_csv
 from backend.services.campaign_leads import add_csv_rows, add_endpoints, add_lead_ids
@@ -33,6 +35,7 @@ from backend.services.campaign_runner import (
     start_runner,
     stop_runner,
 )
+from backend.services.data_scope import get_scope_filters, can_access_record
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +128,7 @@ def _resolve_agent_ids(body: CampaignIn | CampaignUpdateIn) -> list[int]:
     return ids
 
 
-async def _validate_agents(db: AsyncSession, agent_ids: list[int]) -> list[Agent]:
+async def _validate_agents(db: AsyncSession, agent_ids: list[int], user: User) -> list[Agent]:
     if not agent_ids:
         raise HTTPException(400, "Select at least one sales agent")
     agents: list[Agent] = []
@@ -142,6 +145,9 @@ async def _validate_agents(db: AsyncSession, agent_ids: list[int]) -> list[Agent
             400,
             "All agents in a campaign must belong to the same organization",
         )
+    # Non-admins may only build campaigns with agents in their own org.
+    if user.role != UserRole.admin and next(iter(org_ids)) != user.organization_id:
+        raise HTTPException(403, "You can only use agents from your own organization")
     return agents
 
 
@@ -167,9 +173,12 @@ def _campaign_meta_agents(
 @router.get("")
 async def list_campaigns(
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Campaign).order_by(Campaign.created_at.desc()))
+    q = select(Campaign).order_by(Campaign.created_at.desc())
+    for f in get_scope_filters(user, Campaign):
+        q = q.where(f)
+    result = await db.execute(q)
     campaigns = result.scalars().all()
     out = []
     for c in campaigns:
@@ -182,14 +191,15 @@ async def list_campaigns(
 async def create_campaign(
     body: CampaignIn,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     agent_ids = _resolve_agent_ids(body)
-    await _validate_agents(db, agent_ids)
+    await _validate_agents(db, agent_ids, user)
 
     campaign = Campaign(
         name=body.name.strip(),
         agent_id=agent_ids[0],
+        owner_id=user.id,
         description=(body.description or "").strip() or None,
         status=CampaignStatus.draft,
         meta=_campaign_meta_agents({}, agent_ids, body.inter_call_delay_sec),
@@ -210,9 +220,11 @@ async def create_campaign(
 async def get_campaign(
     campaign_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     c = await _load_campaign(db, campaign_id)
+    if not can_access_record(user, c):
+        raise HTTPException(403, "Access denied")
     lead_ids = [cl.lead_id for cl in c.campaign_leads if cl.lead_id]
     leads_map: dict[int, Lead] = {}
     if lead_ids:
@@ -233,9 +245,11 @@ async def update_campaign(
     campaign_id: int,
     body: CampaignUpdateIn,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     c = await _load_campaign(db, campaign_id)
+    if not can_access_record(user, c):
+        raise HTTPException(403, "Access denied")
     if c.status == CampaignStatus.running and is_runner_active(c.id):
         raise HTTPException(400, "Pause or stop the campaign before editing")
 
@@ -247,7 +261,7 @@ async def update_campaign(
         body.agent_ids is not None or body.agent_id is not None
     ) else None
     if agent_ids is not None:
-        await _validate_agents(db, agent_ids)
+        await _validate_agents(db, agent_ids, user)
         c.agent_id = agent_ids[0]
         delay = (
             body.inter_call_delay_sec
@@ -268,9 +282,11 @@ async def update_campaign(
 async def delete_campaign(
     campaign_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     c = await _load_campaign(db, campaign_id)
+    if not can_access_record(user, c):
+        raise HTTPException(403, "Access denied")
     if c.status == CampaignStatus.running and is_runner_active(c.id):
         raise HTTPException(400, "Stop the campaign before deleting")
     await stop_runner(campaign_id)
@@ -283,9 +299,11 @@ async def add_campaign_leads(
     campaign_id: int,
     body: CampaignLeadsIn,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     c = await _load_campaign(db, campaign_id)
+    if not can_access_record(user, c):
+        raise HTTPException(403, "Access denied")
     if c.status == CampaignStatus.running:
         raise HTTPException(400, "Pause the campaign before adding targets")
 
@@ -306,9 +324,11 @@ async def import_campaign_csv(
     campaign_id: int,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     c = await _load_campaign(db, campaign_id)
+    if not can_access_record(user, c):
+        raise HTTPException(403, "Access denied")
     if c.status == CampaignStatus.running:
         raise HTTPException(400, "Pause the campaign before importing")
 
@@ -332,10 +352,12 @@ async def start_campaign(
     campaign_id: int,
     body: CampaignStartIn,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     """Start or schedule campaign. Uses rolling parallel slots — as each call ends, the next pending target dials."""
     c = await _load_campaign(db, campaign_id)
+    if not can_access_record(user, c):
+        raise HTTPException(403, "Access denied")
     if is_runner_active(c.id):
         raise HTTPException(409, "Campaign runner is already active")
 
@@ -384,13 +406,20 @@ async def start_campaign(
     }
 
 
+async def _load_campaign_for_user(db: AsyncSession, campaign_id: int, user: User) -> Campaign:
+    c = await _load_campaign(db, campaign_id)
+    if not can_access_record(user, c):
+        raise HTTPException(403, "Access denied")
+    return c
+
+
 @router.post("/{campaign_id}/pause")
 async def pause_campaign(
     campaign_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
-    c = await _load_campaign(db, campaign_id)
+    c = await _load_campaign_for_user(db, campaign_id, user)
     c.status = CampaignStatus.paused
     await stop_runner(campaign_id)
     return {"campaign_id": campaign_id, "status": "paused"}
@@ -400,10 +429,10 @@ async def pause_campaign(
 async def stop_campaign(
     campaign_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     """Stop runner; in-flight calls continue on bridge but no new dials."""
-    c = await _load_campaign(db, campaign_id)
+    c = await _load_campaign_for_user(db, campaign_id, user)
     await stop_runner(campaign_id)
     for cl in c.campaign_leads:
         if cl.status == CampaignLeadStatus.dialing:
@@ -422,10 +451,10 @@ async def stop_campaign(
 async def reset_campaign_leads(
     campaign_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     """Reset failed/completed targets back to pending (for re-run after a bad attempt)."""
-    c = await _load_campaign(db, campaign_id)
+    c = await _load_campaign_for_user(db, campaign_id, user)
     if c.status == CampaignStatus.running and is_runner_active(c.id):
         raise HTTPException(400, "Stop the campaign before resetting targets")
     n = 0

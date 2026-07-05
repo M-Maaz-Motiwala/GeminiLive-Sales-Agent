@@ -12,13 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.auth.deps import get_current_user
 from backend.config import get_settings
 from backend.db.database import get_db
-from backend.db.models import Agent, AgentType, Lead, Organization, Session as DBSession
+from backend.db.models import Agent, AgentType, Lead, Organization, Session as DBSession, User, UserRole
 from backend.services.bridge_client import (
     bridge_status,
     fetch_dial_status,
     hangup_outbound,
     originate_outbound,
 )
+from backend.services.data_scope import assert_agent_in_user_org, can_access_record
 from backend.services.outbound_dialer import dial_one
 from backend.services.outbound_dial_status import enrich_dial_status
 from backend.services.outbound_policy import within_call_window
@@ -99,16 +100,16 @@ async def outbound_status(
 @router.get("/agents")
 async def list_outbound_agents(
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(Agent)
-        .where(
-            Agent.is_active.is_(True),
-            Agent.type.in_((AgentType.sales, AgentType.outbound_sales)),
-        )
-        .order_by(Agent.name)
+    q = select(Agent).where(
+        Agent.is_active.is_(True),
+        Agent.type.in_((AgentType.sales, AgentType.outbound_sales)),
     )
+    if user.role != UserRole.admin:
+        q = q.where(Agent.organization_id == user.organization_id)
+    q = q.order_by(Agent.name)
+    result = await db.execute(q)
     agents = result.scalars().all()
     org_ids = {a.organization_id for a in agents if a.organization_id}
     org_names: dict[int, str] = {}
@@ -136,20 +137,17 @@ async def list_outbound_agents(
 async def dial_outbound(
     body: OutboundDialIn,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user=Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(Agent).where(Agent.id == body.agent_id, Agent.is_active.is_(True))
-    )
-    agent = result.scalar_one_or_none()
-    if not agent:
-        raise HTTPException(404, "Agent not found")
+    agent = await assert_agent_in_user_org(db, user, body.agent_id)
 
     lead: Lead | None = None
     if body.lead_id is not None:
         lead = await db.get(Lead, body.lead_id)
         if lead is None:
             raise HTTPException(404, "Lead not found")
+        if user.role != UserRole.admin and lead.organization_id != user.organization_id:
+            raise HTTPException(403, "Lead does not belong to your organization")
 
     try:
         return await dial_one(
@@ -160,6 +158,7 @@ async def dial_outbound(
             endpoint=body.endpoint,
             caller_id=body.caller_id,
             connect_experience=body.connect_experience,
+            owner_id=user.id,
         )
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
@@ -176,7 +175,7 @@ async def dial_outbound(
 async def get_dial_status(
     channel_id: str,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     """Live outbound dial tracking for CRM UI (originating → ringing → in call → ended)."""
     row = await fetch_dial_status(channel_id)
@@ -210,14 +209,34 @@ async def get_dial_status(
                     row = {**sess.meta["dial_status"], **bridge_row, **row}
                 break
 
+    # Enforce RBAC on the resolved session.
+    sid = row.get("session_id")
+    if sid:
+        sess = await db.get(DBSession, sid)
+        if sess and not can_access_record(user, sess):
+            raise HTTPException(403, "Access denied")
+
     return enrich_dial_status(row)
 
 
 @router.post("/hangup/{channel_id}")
 async def hangup_outbound_dial(
     channel_id: str,
-    _=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
+    """End an active outbound dial from the CRM."""
+    # Verify the caller owns / can access the session tied to this channel.
+    recent = await db.execute(
+        select(DBSession).order_by(DBSession.started_at.desc()).limit(50)
+    )
+    owned = None
+    for sess in recent.scalars():
+        if (sess.meta or {}).get("channel_id") == channel_id:
+            owned = sess
+            break
+    if owned and not can_access_record(user, owned):
+        raise HTTPException(403, "Access denied")
     """End an active outbound dial from the CRM."""
     try:
         await hangup_outbound(channel_id)
@@ -240,19 +259,16 @@ async def hangup_outbound_dial(
 async def dial_batch(
     body: BatchDialIn,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user=Depends(get_current_user),
 ):
     """Dial multiple targets at once (lab: two softphones). Respects bridge capacity."""
-    result = await db.execute(
-        select(Agent).where(Agent.id == body.agent_id, Agent.is_active.is_(True))
-    )
-    agent = result.scalar_one_or_none()
-    if not agent:
-        raise HTTPException(404, "Agent not found")
+    agent = await assert_agent_in_user_org(db, user, body.agent_id)
 
     targets: list[tuple[Optional[Lead], Optional[int], Optional[str]]] = []
     for lid in body.lead_ids:
         lead = await db.get(Lead, lid)
+        if lead is not None and user.role != UserRole.admin and lead.organization_id != user.organization_id:
+            raise HTTPException(403, f"Lead {lid} does not belong to your organization")
         targets.append((lead, lid, None))
     for ep in body.endpoints:
         targets.append((None, None, ep.strip()))
@@ -269,6 +285,7 @@ async def dial_batch(
                 lead=lead,
                 lead_id=lead_id,
                 endpoint=endpoint,
+                owner_id=user.id,
             )
             results.append({"ok": True, **resp})
         except Exception as exc:

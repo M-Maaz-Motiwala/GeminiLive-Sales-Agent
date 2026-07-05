@@ -7,6 +7,7 @@ from backend.auth.deps import get_current_user
 from backend.db.database import get_db
 from backend.db.models import Output, Session as DBSession
 from backend.services.org_scope import session_org_clause
+from backend.services.data_scope import get_scope_filters_async, clamp_org_param
 
 router = APIRouter(prefix="/api/outputs", tags=["outputs"])
 
@@ -18,13 +19,16 @@ async def list_outputs(
     organization_id: Optional[int] = None,
     limit: int = Query(100, le=500),
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user=Depends(get_current_user),
 ):
     q = select(Output).order_by(Output.created_at.desc()).limit(limit)
+    for f in await get_scope_filters_async(user, Output, db):
+        q = q.where(f)
     if output_type:
         q = q.where(Output.output_type == output_type)
     if session_id:
         q = q.where(Output.session_id == session_id)
+    organization_id = clamp_org_param(user, organization_id)
     if organization_id:
         q = (
             q.join(DBSession, Output.session_id == DBSession.id)

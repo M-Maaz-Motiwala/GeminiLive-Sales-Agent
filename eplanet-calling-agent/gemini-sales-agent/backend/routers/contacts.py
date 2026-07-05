@@ -6,8 +6,9 @@ from typing import Optional
 
 from backend.auth.deps import get_current_user
 from backend.db.database import get_db
-from backend.db.models import Contact
+from backend.db.models import Contact, User
 from backend.services.org_scope import org_names_map
+from backend.services.data_scope import get_scope_filters, can_access_record, clamp_org_param
 
 router = APIRouter(prefix="/api/contacts", tags=["contacts"])
 
@@ -35,9 +36,12 @@ async def list_contacts(
     organization_id: Optional[int] = None,
     limit: int = Query(100, le=500),
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     q = select(Contact).order_by(Contact.created_at.desc()).limit(limit)
+    for f in get_scope_filters(user, Contact):
+        q = q.where(f)
+    organization_id = clamp_org_param(user, organization_id)
     if organization_id:
         q = q.where(Contact.organization_id == organization_id)
     if search:
@@ -55,37 +59,43 @@ async def list_contacts(
 
 
 @router.post("")
-async def create_contact(body: ContactIn, db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
-    c = Contact(**body.model_dump())
+async def create_contact(body: ContactIn, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    c = Contact(**body.model_dump(), owner_id=user.id)
     db.add(c)
     await db.flush()
     return _out(c)
 
 
 @router.get("/{contact_id}")
-async def get_contact(contact_id: int, db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
+async def get_contact(contact_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     result = await db.execute(select(Contact).where(Contact.id == contact_id))
     c = result.scalar_one_or_none()
     if not c:
         raise HTTPException(404, "Contact not found")
+    if not can_access_record(user, c):
+        raise HTTPException(403, "Access denied")
     return _out(c)
 
 
 @router.put("/{contact_id}")
-async def update_contact(contact_id: int, body: ContactIn, db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
+async def update_contact(contact_id: int, body: ContactIn, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     result = await db.execute(select(Contact).where(Contact.id == contact_id))
     c = result.scalar_one_or_none()
     if not c:
         raise HTTPException(404, "Contact not found")
+    if not can_access_record(user, c):
+        raise HTTPException(403, "Access denied")
     for field, value in body.model_dump().items():
         setattr(c, field, value)
     return _out(c)
 
 
 @router.delete("/{contact_id}", status_code=204)
-async def delete_contact(contact_id: int, db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
+async def delete_contact(contact_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     result = await db.execute(select(Contact).where(Contact.id == contact_id))
     c = result.scalar_one_or_none()
     if not c:
         raise HTTPException(404, "Contact not found")
+    if not can_access_record(user, c):
+        raise HTTPException(403, "Access denied")
     await db.delete(c)

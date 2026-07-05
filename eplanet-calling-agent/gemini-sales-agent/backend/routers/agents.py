@@ -8,11 +8,12 @@ from typing import Optional
 
 from backend.auth.deps import get_current_user
 from backend.db.database import get_db
-from backend.db.models import Agent, Persona, AgentType, User, Document, Organization, VoiceGender
+from backend.db.models import Agent, Persona, AgentType, User, Document, Organization, VoiceGender, UserRole
 from backend.services.agent_provisioning import (
     agent_type_needs_extension,
     allocate_inbound_extension,
 )
+from backend.services.data_scope import get_scope_filters, can_access_record
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -95,9 +96,23 @@ def _unique_slug(base: str, existing: set[str]) -> str:
     return slug
 
 
+def _enforce_agent_org(user: User, organization_id: int) -> None:
+    """Non-admins may only manage agents within their own organization."""
+    if user.role == UserRole.admin:
+        return
+    if organization_id != user.organization_id:
+        raise HTTPException(403, "You can only manage agents in your own organization")
+
+
 @router.get("")
-async def list_agents(db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
-    result = await db.execute(select(Agent).order_by(Agent.created_at.desc()))
+async def list_agents(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    q = select(Agent).order_by(Agent.created_at.desc())
+    for f in get_scope_filters(user, Agent):
+        q = q.where(f)
+    result = await db.execute(q)
     agents = result.scalars().all()
     counts = await _doc_counts(db)
     org_ids = {a.organization_id for a in agents if a.organization_id}
@@ -119,6 +134,8 @@ async def create_agent(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    if user.role != UserRole.admin and body.organization_id != user.organization_id:
+        raise HTTPException(403, "You can only create agents in your own organization")
     org = await _load_org(db, body.organization_id)
     slug_base = re.sub(r"[^a-z0-9-]", "-", body.name.lower().strip()).strip("-") or "agent"
     taken = {row[0] for row in (await db.execute(select(Agent.slug))).all()}
@@ -151,11 +168,13 @@ async def create_agent(
 
 
 @router.get("/{agent_id}")
-async def get_agent(agent_id: int, db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
+async def get_agent(agent_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     result = await db.execute(select(Agent).where(Agent.id == agent_id))
     a = result.scalar_one_or_none()
     if not a:
         raise HTTPException(404, "Agent not found")
+    if not can_access_record(user, a):
+        raise HTTPException(403, "Access denied")
     counts = await _doc_counts(db)
     org_name = None
     if a.organization_id:
@@ -165,11 +184,13 @@ async def get_agent(agent_id: int, db: AsyncSession = Depends(get_db), _=Depends
 
 
 @router.get("/{agent_id}/stats")
-async def agent_stats(agent_id: int, db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
+async def agent_stats(agent_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     result = await db.execute(select(Agent).where(Agent.id == agent_id))
     a = result.scalar_one_or_none()
     if not a:
         raise HTTPException(404, "Agent not found")
+    if not can_access_record(user, a):
+        raise HTTPException(403, "Access denied")
     doc_result = await db.execute(
         select(func.count(Document.id)).where(Document.agent_id == agent_id)
     )
@@ -189,14 +210,17 @@ async def update_agent(
     agent_id: int,
     body: AgentIn,
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     result = await db.execute(select(Agent).where(Agent.id == agent_id))
     a = result.scalar_one_or_none()
     if not a:
         raise HTTPException(404, "Agent not found")
+    if not can_access_record(user, a):
+        raise HTTPException(403, "Access denied")
 
     org = await _load_org(db, body.organization_id)
+    _enforce_agent_org(user, org.id)
     a.name = body.name
     a.type = body.type
     a.organization_id = org.id
@@ -218,23 +242,37 @@ async def update_agent(
 
 
 @router.delete("/{agent_id}", status_code=204)
-async def delete_agent(agent_id: int, db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
+async def delete_agent(agent_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     result = await db.execute(select(Agent).where(Agent.id == agent_id))
     a = result.scalar_one_or_none()
     if not a:
         raise HTTPException(404, "Agent not found")
+    if not can_access_record(user, a):
+        raise HTTPException(403, "Access denied")
     await db.delete(a)
 
 
+async def _check_agent_access(db: AsyncSession, user: User, agent_id: int) -> Agent:
+    result = await db.execute(select(Agent).where(Agent.id == agent_id))
+    a = result.scalar_one_or_none()
+    if not a:
+        raise HTTPException(404, "Agent not found")
+    if not can_access_record(user, a):
+        raise HTTPException(403, "Access denied")
+    return a
+
+
 @router.get("/{agent_id}/personas")
-async def list_personas(agent_id: int, db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
+async def list_personas(agent_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    await _check_agent_access(db, user, agent_id)
     result = await db.execute(select(Persona).where(Persona.agent_id == agent_id))
     personas = result.scalars().all()
     return [{"id": p.id, "name": p.name, "description": p.description, "traits": p.traits, "example_phrases": p.example_phrases, "is_active": p.is_active} for p in personas]
 
 
 @router.post("/{agent_id}/personas")
-async def create_persona(agent_id: int, body: PersonaIn, db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
+async def create_persona(agent_id: int, body: PersonaIn, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    await _check_agent_access(db, user, agent_id)
     p = Persona(agent_id=agent_id, **body.model_dump())
     db.add(p)
     await db.flush()
@@ -242,7 +280,8 @@ async def create_persona(agent_id: int, body: PersonaIn, db: AsyncSession = Depe
 
 
 @router.delete("/{agent_id}/personas/{persona_id}", status_code=204)
-async def delete_persona(agent_id: int, persona_id: int, db: AsyncSession = Depends(get_db), _=Depends(get_current_user)):
+async def delete_persona(agent_id: int, persona_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    await _check_agent_access(db, user, agent_id)
     result = await db.execute(select(Persona).where(Persona.id == persona_id, Persona.agent_id == agent_id))
     p = result.scalar_one_or_none()
     if not p:

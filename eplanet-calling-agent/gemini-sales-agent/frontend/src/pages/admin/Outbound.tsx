@@ -132,7 +132,8 @@ function DialProgressCard({
 }
 
 export default function Outbound() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [searchParams] = useSearchParams();
   const [agents, setAgents] = useState<OutboundAgent[]>([]);
   const [organizations, setOrganizations] = useState<any[]>([]);
@@ -521,6 +522,7 @@ export default function Outbound() {
               </p>
             ) : (
               <>
+                {isAdmin && (
                 <label className="block space-y-1.5">
                   <span className="text-xs text-zinc-500 uppercase tracking-wide">Organization</span>
                   <select
@@ -539,6 +541,10 @@ export default function Outbound() {
                     <p className="text-[10px] text-zinc-600">Outbound caller ID: {selectedOrg.did}</p>
                   )}
                 </label>
+                )}
+                {!isAdmin && selectedOrg && (
+                  <p className="text-[10px] text-zinc-600">Outbound caller ID: {selectedOrg.did}</p>
+                )}
 
                 <label className="block space-y-1.5">
                   <span className="text-xs text-zinc-500 uppercase tracking-wide">Outbound agent</span>

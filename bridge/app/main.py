@@ -1016,11 +1016,13 @@ class GeminiLiveBridge:
             dialed_endpoint: Optional[str] = None
             campaign_lead_id: Optional[int] = None
             connect_experience = "auto_greeting"
+            owner_id: Optional[int] = None
             if pending:
                 agent_slug = pending.get("agent_slug") or agent_slug
                 lead_id = pending.get("lead_id")
                 dialed_endpoint = pending.get("endpoint")
                 campaign_lead_id = pending.get("campaign_lead_id")
+                owner_id = pending.get("owner_id")
                 direction = "outbound"
                 connect_experience = str(
                     pending.get("connect_experience") or "auto_greeting"
@@ -1054,6 +1056,7 @@ class GeminiLiveBridge:
                 lead_id=lead_id,
                 dialed_endpoint=dialed_endpoint,
                 campaign_lead_id=campaign_lead_id,
+                owner_id=owner_id,
             )
 
             if direction == "outbound":
@@ -1759,6 +1762,7 @@ class GeminiLiveBridge:
         caller_id: Optional[str] = None,
         connect_experience: Optional[str] = None,
         campaign_lead_id: Optional[int] = None,
+        owner_id: Optional[int] = None,
     ) -> dict[str, Any]:
         """Originate an outbound call via ARI; StasisStart loads platform config."""
         if len(self._calls) >= self.max_concurrent_calls:
@@ -1808,6 +1812,7 @@ class GeminiLiveBridge:
             "direction": "outbound",
             "connect_experience": (connect_experience or "auto_greeting"),
             "campaign_lead_id": campaign_lead_id,
+            "owner_id": owner_id,
         }
         self._upsert_dial_status(
             channel_id,
@@ -1844,6 +1849,7 @@ class GeminiLiveBridge:
         lead_id: Optional[int] = None,
         dialed_endpoint: Optional[str] = None,
         campaign_lead_id: Optional[int] = None,
+        owner_id: Optional[int] = None,
     ) -> None:
         """Load per-call agent config from the platform API."""
         state = call.state
@@ -1877,6 +1883,8 @@ class GeminiLiveBridge:
                 payload["dialed_endpoint"] = dialed_endpoint
             if campaign_lead_id is not None:
                 payload["campaign_lead_id"] = campaign_lead_id
+            if owner_id is not None:
+                payload["owner_id"] = owner_id
             resp = await self.http.post(
                 f"{self.platform_url}/internal/calls/start",
                 json=payload,
@@ -2585,6 +2593,7 @@ class OriginateIn(BaseModel):
     caller_id: Optional[str] = None
     connect_experience: Optional[str] = None
     campaign_lead_id: Optional[int] = None
+    owner_id: Optional[int] = None
 
 
 def _verify_bridge_token(x_bridge_token: str = Header(..., alias="X-Bridge-Token")) -> None:
@@ -2605,6 +2614,7 @@ async def internal_originate(
         caller_id=body.caller_id,
         connect_experience=body.connect_experience,
         campaign_lead_id=body.campaign_lead_id,
+        owner_id=body.owner_id,
     )
 
 

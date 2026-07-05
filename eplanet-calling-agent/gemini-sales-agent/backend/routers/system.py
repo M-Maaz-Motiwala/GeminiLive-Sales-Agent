@@ -7,9 +7,10 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.auth.deps import get_current_user
+from backend.auth.deps import get_current_user, require_admin
 from backend.db.database import get_db
 from backend.db.models import PlatformSetting
+from backend.services.platform_settings import get_platform_setting, set_platform_setting
 from backend.services.telephony_diagnostics import (
     DEFAULT_LOG_TAIL,
     MAX_LOG_TAIL,
@@ -21,6 +22,12 @@ from backend.services.telephony_diagnostics import (
 router = APIRouter(prefix="/api/system", tags=["system"])
 
 SETTING_MASTER_PROMPT = "master_prompt"
+SETTING_CONCURRENT_CALLS = "max_concurrent_calls"
+
+
+class ConcurrentCallLimitIn(BaseModel):
+    limit: int
+
 
 
 class SettingsOut(BaseModel):
@@ -124,6 +131,37 @@ async def update_settings(
         else:
             db.add(PlatformSetting(key=SETTING_MASTER_PROMPT, value=body.master_prompt or None))
     return SettingsOut(master_prompt=body.master_prompt)
+
+
+@router.get("/concurrent-call-limit")
+async def get_concurrent_call_limit(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    from backend.config import get_settings
+    settings = get_settings()
+    val = await get_platform_setting(SETTING_CONCURRENT_CALLS, db)
+    if val is None:
+        limit = settings.max_concurrent_outbound
+    else:
+        try:
+            limit = int(val)
+        except ValueError:
+            limit = settings.max_concurrent_outbound
+    return {"limit": limit}
+
+
+@router.put("/concurrent-call-limit")
+async def update_concurrent_call_limit(
+    body: ConcurrentCallLimitIn,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_admin),
+):
+    if body.limit < 1 or body.limit > 50:
+        raise HTTPException(400, "Limit must be between 1 and 50")
+    await set_platform_setting(SETTING_CONCURRENT_CALLS, str(body.limit), db)
+    await db.commit()
+    return {"limit": body.limit}
 
 
 @router.get("/diagnostics")

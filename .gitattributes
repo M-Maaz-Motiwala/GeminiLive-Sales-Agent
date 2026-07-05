@@ -1,0 +1,9 @@
+# Ensure shell scripts always use LF line endings (Unix-style)
+*.sh text eol=lf
+
+# Ensure common config/env files use LF
+*.env text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+Dockerfile text eol=lf
+Makefile text eol=lf

@@ -24,6 +24,7 @@ from backend.db.models import (
 from backend.services.bridge_client import bridge_status
 from backend.services.callback_router import busy_agent_ids
 from backend.services.outbound_dialer import dial_one
+from backend.services.platform_settings import get_platform_setting
 
 logger = logging.getLogger(__name__)
 
@@ -216,8 +217,9 @@ async def _fill_slots(
     inter_call_delay: float,
     runner: dict[str, Any],
     extra_busy: set[int],
+    platform_available: int = 50,
 ) -> dict[str, dict[str, Any]]:
-    slots = max_parallel - len(active_dials)
+    slots = min(max_parallel - len(active_dials), platform_available)
     if slots <= 0:
         return active_dials
 
@@ -255,6 +257,7 @@ async def _fill_slots(
                 lead_id=cl.lead_id,
                 endpoint=cl.endpoint,
                 campaign_lead_id=cl.id,
+                owner_id=campaign.owner_id,
             )
             channel_id = (resp.get("bridge") or {}).get("channel_id")
             if channel_id:
@@ -355,6 +358,21 @@ async def _run_loop(
                     inter_call_delay,
                     runner,
                 )
+                # Enforce platform-wide concurrent call limit
+                val = await get_platform_setting("max_concurrent_calls", db)
+                from backend.config import get_settings
+                settings = get_settings()
+                default_limit = settings.max_concurrent_outbound
+                try:
+                    platform_limit = int(val) if val is not None else default_limit
+                except ValueError:
+                    platform_limit = default_limit
+
+                # Platform limit is capped at 50 hard ceiling
+                platform_limit = min(max(1, platform_limit), 50)
+                active_calls_on_bridge = int(bridge.get("active_calls") or 0)
+                platform_available = max(0, platform_limit - active_calls_on_bridge)
+
                 active_dials = await _fill_slots(
                     db,
                     campaign,
@@ -364,6 +382,7 @@ async def _run_loop(
                     inter_call_delay,
                     runner,
                     inbound_busy,
+                    platform_available=platform_available,
                 )
                 runner["active_dials"] = active_dials
                 runner["last_tick"] = datetime.now(timezone.utc).isoformat()

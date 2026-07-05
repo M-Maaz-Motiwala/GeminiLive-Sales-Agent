@@ -6,9 +6,18 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from google.genai import types
 
-from backend.services.tools import crm_tools, rag_tools
+from backend.services.tools import crm_tools, rag_tools, calendar_tools
 
 logger = logging.getLogger(__name__)
+
+
+async def _resolve_session_owner(db: AsyncSession, session_id: int | None) -> int | None:
+    """Resolve the owner_id of a session (needed for per-user calendar access)."""
+    if not session_id:
+        return None
+    from backend.db.models import Session as DBSession
+    sess = await db.get(DBSession, session_id)
+    return sess.owner_id if sess else None
 
 
 def _norm_str(val) -> str | None:
@@ -318,6 +327,125 @@ TOOL_DECLARATIONS = [
             "required": ["query"],
         },
     },
+    {
+        "name": "find_next_available_slot",
+        "description": (
+            "Find the next available meeting slot in the sales rep's calendar, "
+            "considering existing events. Call this only AFTER the caller has confirmed their timezone. "
+            "Returns the next free slot within business hours (default 9 AM – 6 PM in the caller's timezone). "
+            "IMPORTANT: If the caller asks for a specific day (e.g. 'tomorrow', 'Friday', 'next Monday'), "
+            "you MUST pass target_date as YYYY-MM-DD for that day — otherwise the tool searches from now "
+            "and may return a slot for today instead of the requested day."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "timezone": {
+                    "type": "string",
+                    "description": "IANA timezone of the caller, e.g. 'America/New_York'. Must be confirmed by the caller.",
+                },
+                "target_date": {
+                    "type": "string",
+                    "description": (
+                        "Specific date to search on, as YYYY-MM-DD (e.g. '2026-07-03'). "
+                        "Pass this whenever the caller mentions a specific day like 'tomorrow', "
+                        "'Friday', 'next Monday'. Compute it from today's date. If omitted, "
+                        "the tool searches from the current time forward."
+                    ),
+                },
+                "preferred_after": {
+                    "type": "string",
+                    "description": "ISO datetime to start searching from (optional). If omitted, searches from now.",
+                },
+                "duration_mins": {
+                    "type": "integer",
+                    "description": "Meeting duration in minutes (default 30).",
+                },
+                "business_hour_start": {
+                    "type": "integer",
+                    "description": "Business hours start (24h, default 9). Pass only if the caller specifies working hours.",
+                },
+                "business_hour_end": {
+                    "type": "integer",
+                    "description": "Business hours end (24h, default 18). Pass only if the caller specifies working hours.",
+                },
+            },
+            "required": ["timezone"],
+        },
+    },
+    {
+        "name": "list_available_slots",
+        "description": (
+            "List ALL available meeting slots in the sales rep's calendar for a given day "
+            "(or the next several days). Use this when the caller asks to see available times / "
+            "their schedule / options, instead of find_next_available_slot which only returns one. "
+            "Call this only AFTER the caller has confirmed their timezone. "
+            "If the caller asks about a specific day (e.g. 'tomorrow'), pass target_date as YYYY-MM-DD."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "timezone": {
+                    "type": "string",
+                    "description": "IANA timezone of the caller, e.g. 'Asia/Karachi'. Must be confirmed by the caller.",
+                },
+                "target_date": {
+                    "type": "string",
+                    "description": (
+                        "Specific date to list slots for, as YYYY-MM-DD (e.g. '2026-07-03'). "
+                        "Pass this when the caller asks about 'tomorrow' or a named day. "
+                        "If omitted, lists slots for the next several days."
+                    ),
+                },
+                "days_ahead": {
+                    "type": "integer",
+                    "description": "Number of days to scan when target_date is not given (default 7).",
+                },
+                "duration_mins": {
+                    "type": "integer",
+                    "description": "Meeting duration in minutes (default 30).",
+                },
+                "business_hour_start": {
+                    "type": "integer",
+                    "description": "Business hours start (24h, default 9). Pass only if the caller specifies working hours.",
+                },
+                "business_hour_end": {
+                    "type": "integer",
+                    "description": "Business hours end (24h, default 18). Pass only if the caller specifies working hours.",
+                },
+            },
+            "required": ["timezone"],
+        },
+    },
+    {
+        "name": "schedule_meeting",
+        "description": (
+            "Book a confirmed meeting slot on the sales rep's Google Calendar. "
+            "Only call after the prospect has explicitly confirmed the date, time, and timezone."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Meeting title"},
+                "start_iso": {"type": "string", "description": "ISO datetime for meeting start"},
+                "end_iso": {"type": "string", "description": "ISO datetime for meeting end"},
+                "timezone": {"type": "string", "description": "IANA timezone, e.g. 'America/New_York'"},
+                "attendee_email": {"type": "string", "description": "Prospect's email (optional)"},
+            },
+            "required": ["title", "start_iso", "end_iso", "timezone"],
+        },
+    },
+    {
+        "name": "cancel_meeting",
+        "description": "Cancel a previously booked meeting on the sales rep's Google Calendar.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "event_id": {"type": "string", "description": "Google Calendar event ID to cancel"},
+            },
+            "required": ["event_id"],
+        },
+    },
 ]
 
 
@@ -387,6 +515,35 @@ async def dispatch(
                     org_id = agent.organization_id
                     params = {**params, "organization_id": org_id}
             result = await rag_tools.search_knowledge_base(params, agent_id=agent_id)
+
+        elif tool_name == "find_next_available_slot":
+            # Resolve user_id from session owner
+            owner_id = await _resolve_session_owner(db, session_id)
+            if not owner_id:
+                result = {"error": "No user associated with this session for calendar access"}
+            else:
+                result = await calendar_tools.find_next_available_slot(db, owner_id, params)
+
+        elif tool_name == "list_available_slots":
+            owner_id = await _resolve_session_owner(db, session_id)
+            if not owner_id:
+                result = {"error": "No user associated with this session for calendar access"}
+            else:
+                result = await calendar_tools.list_available_slots(db, owner_id, params)
+
+        elif tool_name == "schedule_meeting":
+            owner_id = await _resolve_session_owner(db, session_id)
+            if not owner_id:
+                result = {"error": "No user associated with this session for calendar access"}
+            else:
+                result = await calendar_tools.schedule_meeting(db, owner_id, params)
+
+        elif tool_name == "cancel_meeting":
+            owner_id = await _resolve_session_owner(db, session_id)
+            if not owner_id:
+                result = {"error": "No user associated with this session for calendar access"}
+            else:
+                result = await calendar_tools.cancel_meeting(db, owner_id, params)
 
         else:
             result = {"error": f"Unknown tool: {tool_name}"}
